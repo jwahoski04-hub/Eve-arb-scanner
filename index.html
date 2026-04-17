@@ -430,7 +430,7 @@ tbody tr:hover td{background:rgba(74,214,255,0.12) !important;}
 tr.row-crossed td{background:rgba(251,191,36,0.06) !important;}
 tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
 /* Item cell — icon + name side by side (matches Market Supply autocomplete pattern) */
-.item-cell{display:flex;align-items:center;gap:8px;min-width:0;}
+.item-cell{display:flex;align-items:center;gap:12px;min-width:0;}
 .item-icon{
   flex-shrink:0;width:24px;height:24px;border-radius:2px;
   background:var(--bg-0);border:1px solid var(--border-ds);
@@ -492,6 +492,16 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
 /* STATION TRADING */
 .st-controls{background:var(--surface);border:1px solid var(--border);border-radius:3px;padding:1rem 1.25rem;margin-bottom:1rem;}
 .st-ctrl-grid{display:grid;grid-template-columns:repeat(6,minmax(110px,160px)) auto;gap:8px;align-items:end;margin-bottom:1rem;}
+/* Station Trading scan button wrapper — fixed width matching Hub Trading,
+   centered inside its "auto" grid cell (which is allowed to grow by the
+   minmax ceilings on the left). */
+.st-scan-wrap{
+  display:flex;flex-direction:column;gap:5px;
+  width:110px;             /* matches Hub Trading's scan button footprint */
+  justify-self:center;     /* center within the grid cell, not stretch */
+}
+.st-scan-wrap .btn-scan,
+.st-scan-wrap .btn-stop{width:100%;}
 .st-hub-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:8px;}
 .spread-high{color:var(--green);font-weight:600;}
 .spread-mid{color:var(--amber);}
@@ -729,7 +739,7 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
             <button class="vol-btn" data-st-vol-window="30" onclick="stSetVolWindow(30)">30d</button>
           </div>
         </div>
-        <div style="display:flex;flex-direction:column;gap:5px;">
+        <div class="st-scan-wrap">
           <button class="btn-scan" id="stScanBtn" onclick="toggleStationScan()">▶ SCAN</button>
           <button class="btn-stop" id="stStopBtn" onclick="stopStationScan()" style="display:none">■ STOP</button>
         </div>
