@@ -55,22 +55,51 @@
 <meta name="keywords" content="EVE Online, arbitrage, market scanner, ESI, Jita, Amarr, hub trading, station trading" />
 <title>EVE Arbitrage Scanner</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
-<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Exo+2:wght@300;400;600;700&display=swap" rel="stylesheet" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
 <style>
 :root {
-  --bg:#0a0e14;--surface:#0f1520;--surface2:#151d2e;--surface3:#1a2438;
-  --border:rgba(0,200,255,0.12);--border-bright:rgba(0,200,255,0.35);
-  --cyan:#00c8ff;--cyan-dim:rgba(0,200,255,0.10);--cyan-mid:rgba(0,200,255,0.4);
-  --green:#00ff88;--green-dim:rgba(0,255,136,0.10);
-  --amber:#ffb700;--amber-dim:rgba(255,183,0,0.10);
-  --red:#ff4444;--red-dim:rgba(255,68,68,0.10);
-  --purple:#b060ff;--purple-dim:rgba(176,96,255,0.10);
-  --gold:#ffd700;--gold-dim:rgba(255,215,0,0.10);
-  --text:#c8dff0;--text-muted:#5a7a99;--text-dim:#3a5570;
-  --mono:'Share Tech Mono',monospace;--ui:'Exo 2',sans-serif;
+  /* ── EVE Design System v1.0 (from Market Supply tool) ────────── */
+  --bg-0: #07090d;  --bg-1: #0d1117;  --bg-2: #141b25;  --bg-3: #1a2332;
+  --border-ds:     #22304a;
+  --border-hot:    #3a5580;
+  --text-0: #e8eef7;  --text-1: #b8c5d8;  --text-2: #8b9ab0;
+  --amber:     #ffa62b;  --amber-dim: rgba(255,166,43,0.10);
+  --cyan:      #4ad6ff;  --cyan-dim:  rgba(74,214,255,0.10);  --cyan-mid: rgba(74,214,255,0.40);
+  --green:     #4ade80;  --green-dim: rgba(74,222,128,0.10);
+  --red:       #f87171;  --red-dim:   rgba(248,113,113,0.10);
+  --yellow:    #fbbf24;
+  --purple:    #a78bfa;  --purple-dim:rgba(167,139,250,0.10);
+  --gold:      #fbbf24;  --gold-dim:  rgba(251,191,36,0.10);
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", Consolas, Monaco, monospace;
+
+  /* ── Legacy aliases — map old tokens onto the new palette so every
+         existing rule in the scanner works without being rewritten. ─ */
+  --bg:          var(--bg-0);
+  --surface:     var(--bg-1);
+  --surface2:    var(--bg-2);
+  --surface3:    var(--bg-3);
+  --border:        rgba(34, 48, 74, 0.55);     /* subtle divider */
+  --border-bright: rgba(74, 214, 255, 0.35);   /* interactive border accent */
+  --text:        var(--text-0);
+  --text-muted:  var(--text-2);
+  --text-dim:    #5a6a82;
+  --mono:        var(--font-mono);
+  --ui:          var(--font-sans);
 }
 *{box-sizing:border-box;margin:0;padding:0;}
-html,body{background:var(--bg);color:var(--text);font-family:var(--ui);font-size:13px;min-height:100vh;}
+html,body{
+  background:var(--bg-0);
+  background-image:
+    radial-gradient(circle at 20% 10%, rgba(74,214,255,0.04), transparent 40%),
+    radial-gradient(circle at 80% 80%, rgba(255,166,43,0.04), transparent 40%);
+  color:var(--text-0);
+  font-family:var(--font-sans);
+  font-size:13px;
+  min-height:100vh;
+  line-height:1.45;
+}
 .app{padding:1.5rem;min-height:100vh;}
 
 .header{display:flex;align-items:center;gap:12px;margin-bottom:1.25rem;flex-wrap:wrap;}
@@ -226,21 +255,51 @@ html,body{background:var(--bg);color:var(--text);font-family:var(--ui);font-size
 .table-filters{display:flex;gap:6px;align-items:center;flex-wrap:wrap;}
 .tf-select{background:var(--surface);border:1px solid var(--border);color:var(--text-muted);
   font-family:var(--mono);font-size:10px;padding:3px 7px;border-radius:2px;height:26px;}
-.results-wrap{overflow-x:auto;overflow-y:auto;max-height:520px;border:1px solid var(--border);border-radius:3px;}
+.results-wrap{overflow-x:auto;overflow-y:auto;max-height:520px;border:1px solid var(--border);border-radius:3px;overscroll-behavior:contain;}
+.results-wrap::-webkit-scrollbar{width:10px;height:10px;}
+.results-wrap::-webkit-scrollbar-track{background:var(--bg-2);}
+.results-wrap::-webkit-scrollbar-thumb{background:var(--border-hot);border-radius:4px;}
+.results-wrap::-webkit-scrollbar-thumb:hover{background:var(--amber-dim);}
 table{width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed;}
 thead{position:sticky;top:0;z-index:2;}
-th{background:var(--surface2);font-family:var(--mono);font-size:9px;letter-spacing:0.08em;text-transform:uppercase;
-  color:var(--text-muted);padding:8px 10px;border-bottom:1px solid var(--border-bright);
-  text-align:left;white-space:nowrap;cursor:pointer;user-select:none;}
-th:hover{color:var(--cyan);}
-th.sorted{color:var(--cyan);}
-td{padding:7px 10px;border-bottom:1px solid rgba(0,200,255,0.04);font-family:var(--mono);font-size:11px;color:var(--text);white-space:nowrap;}
+th{
+  background:var(--bg-3);
+  font-family:var(--font-sans);
+  font-size:11px;
+  font-weight:500;
+  letter-spacing:0.3px;
+  text-transform:none;            /* Market Supply keeps natural case */
+  color:var(--text-1);
+  padding:6px 10px;
+  border-bottom:1px solid var(--border-ds);
+  border-right:1px solid rgba(34,48,74,0.5);
+  text-align:left;
+  white-space:nowrap;
+  cursor:pointer;
+  user-select:none;
+  transition:color 0.12s, background 0.12s;
+}
+th:last-child{border-right:none;}
+th:hover{color:var(--amber);background:rgba(255,166,43,0.06);}
+th.sorted{color:var(--amber);background:rgba(255,166,43,0.10);}
+td{
+  padding:5px 10px;
+  border-bottom:1px solid var(--border-ds);
+  border-right:1px solid rgba(34,48,74,0.5);
+  font-family:var(--font-mono);
+  font-size:12px;
+  font-variant-numeric:tabular-nums;   /* key — numbers align by column */
+  color:var(--text-0);
+  white-space:nowrap;
+}
+td:last-child{border-right:none;}
 td:nth-child(2){white-space:normal;}
-tr:hover td{background:rgba(0,200,255,0.03);}
+tbody tr:nth-child(even){background:rgba(255,255,255,0.02);}
+tr:hover td{background:rgba(74,214,255,0.04);}
 tr.new-opp td{animation:flashNew 2s ease-out forwards;}
-@keyframes flashNew{0%{background:rgba(0,255,136,0.15)}100%{background:transparent}}
-tr.top-row td{background:rgba(255,215,0,0.04);}
-tr.expanded-row td{background:var(--surface2);padding:0;border-bottom:2px solid var(--border-bright);}
+@keyframes flashNew{0%{background:rgba(74,222,128,0.15)}100%{background:transparent}}
+tr.top-row td{background:rgba(251,191,36,0.04);}
+tr.expanded-row td{background:var(--bg-2);padding:0;border-bottom:2px solid var(--border-hot);}
 
 .item-name{font-family:var(--ui);font-size:12px;color:var(--text);white-space:normal;word-break:break-word;}
 .hub-pill{font-size:9px;padding:2px 6px;border-radius:1px;border:1px solid var(--border);}
