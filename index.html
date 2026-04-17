@@ -1365,101 +1365,6 @@ async function fetchRegionOrders(regionId) {
 }
 
 // ============================================================
-// STATION-FILTERED ORDER FETCH
-// More efficient for single-station scans: fetch the active typeId list for
-// the region (~15k IDs), then fetch each type's orders individually. Each
-// type fetch returns ~5-30 orders total — only a handful per hub region —
-// so we download ~10x less data than dragging the whole region's 200-400K
-// orders and discarding 80% locally.
-//
-// Returns a Map<typeId, {sells, buys, depth}> already filtered to the target
-// station.
-//
-// Params:
-//   regionId      — integer region ID
-//   stationId     — integer station ID (only orders at this location are kept)
-//   onProgress    — optional (pct, msg) callback
-//   orderType     — 'all' | 'sell' | 'buy' — passed to ESI to cut response
-//                   size when we only need one side. Hub Trading uses 'sell'
-//                   because cross-hub comparisons only look at ask prices.
-//                   Station Trading uses 'all' because it needs both sides.
-//   concurrency   — per-batch parallel request count. Reduce when multiple
-//                   fetchStationOrders are running simultaneously (e.g., 5
-//                   hubs at once) to stay within ESI's error budget.
-// ============================================================
-async function fetchStationOrders(regionId, stationId, onProgress, orderType = 'all', concurrency = 50) {
-  const typeMap = new Map();
-
-  // Step 1: Get the list of active typeIds in this region.
-  // This endpoint returns just typeIds (int array), very light pages.
-  let activeTypes = [];
-  let page = 1;
-  try {
-    while (!stopFlag && !stStopFlag) {
-      const resp = await fetch(
-        `https://esi.evetech.net/latest/markets/${regionId}/types/?page=${page}`
-      );
-      parseRateHeaders(resp.headers);
-      if (!resp.ok) break;
-      const data = await resp.json();
-      if (!Array.isArray(data) || !data.length) break;
-      activeTypes = activeTypes.concat(data);
-      if (data.length < 1000) break;
-      page++;
-      if (page > 200) break; // safety
-    }
-  } catch(e) { /* fall through with whatever we have */ }
-
-  if (!activeTypes.length) return typeMap;
-  onProgress && onProgress(10, `Fetching orders for ${activeTypes.length.toLocaleString()} active types...`);
-
-  // Step 2: Fetch orders per typeId in parallel batches.
-  // One checkThrottle call per batch (not per request) keeps things moving.
-  // Filter in the URL by orderType when caller only needs one side.
-  let done = 0;
-  let failed = 0;
-  for (let i = 0; i < activeTypes.length && !stopFlag && !stStopFlag; i += concurrency) {
-    const batch = activeTypes.slice(i, i + concurrency);
-    await checkThrottle();
-    if (stopFlag || stStopFlag) break;
-    await Promise.all(batch.map(async (typeId) => {
-      try {
-        const resp = await throttledFetch(
-          `https://esi.evetech.net/latest/markets/${regionId}/orders/?order_type=${orderType}&type_id=${typeId}`
-        );
-        if (!resp.ok) { failed++; return; }
-        const orders = await resp.json();
-        if (!Array.isArray(orders) || !orders.length) return;
-        // Filter to target station only
-        const stationOrders = orders.filter(o => Number(o.location_id) === stationId);
-        if (!stationOrders.length) return;
-        const entry = { sells: [], buys: [], depth: 0 };
-        for (const o of stationOrders) {
-          if (o.is_buy_order) entry.buys.push(o);
-          else { entry.sells.push(o); entry.depth += Number(o.volume_remain); }
-        }
-        entry.sells.sort((a,b) => Number(a.price) - Number(b.price));
-        entry.buys.sort((a,b)  => Number(b.price) - Number(a.price));
-        typeMap.set(typeId, entry);
-      } catch(e) { failed++; }
-    }));
-    done += batch.length;
-    if (onProgress && done % 500 < concurrency) {
-      const pct = 10 + (done / activeTypes.length) * 80;
-      onProgress(pct, `Fetched ${done.toLocaleString()}/${activeTypes.length.toLocaleString()} types · ${typeMap.size.toLocaleString()} with station orders`);
-    }
-  }
-
-  // Warn if many type fetches failed — indicates ESI throttling
-  if (failed > 0 && failed / activeTypes.length > 0.1) {
-    const failPct = Math.round((failed / activeTypes.length) * 100);
-    log(`⚠ STATION FETCH: ${failPct}% failure rate (${failed}/${activeTypes.length}) — results may be incomplete. Wait 60s and rescan.`);
-  }
-
-  return typeMap;
-}
-
-// ============================================================
 // MARKET HISTORY (per-typeId, cached aggressively)
 // ============================================================
 // HISTORY — returns {v1, v7, v30} daily-volume averages (matches
@@ -1518,19 +1423,47 @@ async function batchResolveNames(typeIds) {
 
     // Run the names POST in parallel with type info fetches — names have no
     // dependency on types, so there's no reason to await them serially.
+    // Retries up to 2 times on 429 (rate limited) with backoff — otherwise
+    // a momentarily-throttled names POST would silently leave every item
+    // displayed as "#typeId" with no visible explanation.
     const namesPromise = (async () => {
-      try {
-        const namesResp = await fetch('https://esi.evetech.net/latest/universe/names/', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(chunk)
-        });
-        parseRateHeaders(namesResp.headers);
-        if (namesResp.ok) {
-          const names = await namesResp.json();
-          names.forEach(n => { nameMap[n.id] = n.name; });
+      let attempt = 0;
+      const maxAttempts = 3;
+      while (attempt < maxAttempts) {
+        attempt++;
+        try {
+          const namesResp = await fetch('https://esi.evetech.net/latest/universe/names/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(chunk)
+          });
+          parseRateHeaders(namesResp.headers);
+          if (namesResp.ok) {
+            const names = await namesResp.json();
+            names.forEach(n => { nameMap[n.id] = n.name; });
+            if (attempt > 1) log(`Names POST recovered on attempt ${attempt}`);
+            return; // success
+          }
+          // Non-OK — decide whether to retry
+          if ((namesResp.status === 429 || namesResp.status === 420 || namesResp.status >= 500) && attempt < maxAttempts) {
+            const backoff = attempt * 2000; // 2s, 4s
+            log(`⚠ Names POST got ${namesResp.status} — retry ${attempt}/${maxAttempts - 1} in ${backoff}ms`);
+            await sleep(backoff);
+            continue;
+          }
+          // Terminal failure
+          log(`⚠ Names POST failed: ${namesResp.status} — ${chunk.length} items will show as #typeId`);
+          return;
+        } catch(e) {
+          if (attempt < maxAttempts) {
+            log(`⚠ Names POST network error — retry ${attempt}/${maxAttempts - 1}`);
+            await sleep(attempt * 1000);
+            continue;
+          }
+          log(`⚠ Names POST gave up after ${maxAttempts} attempts — ${chunk.length} items will show as #typeId`);
+          return;
         }
-      } catch(e) { /* fall through */ }
+      }
     })();
 
     // Fetch packaged volumes AND category_id ONLY for types we've never seen.
@@ -1972,69 +1905,52 @@ async function startScan() {
   const minSellOrds = parseInt(document.getElementById('minSellOrders').value) || 1;
   const maxPriceMult = parseFloat(document.getElementById('maxPriceMult').value) || 0;
 
-  // ── STEP 1: Fetch orders at each selected trade station — ALL HUBS IN PARALLEL ──
-  // Previously dragged the entire region's ~200-400K orders and discarded ~80%.
-  // Now fetches per-typeId orders and keeps only those at the main trade station,
-  // exactly matching the list you intended:
+  // ── STEP 1: Bulk fetch each region's order book (all 5 hubs in parallel) ──
+  // The /markets/{region}/orders/ endpoint returns 1000 orders per page and
+  // is ESI's fastest market endpoint. For Jita's region (The Forge) that's
+  // ~200-400 pages total. We download all orders in each selected hub's
+  // region, then locally filter to keep ONLY orders at the main trade station:
   //   Jita IV-4 · Amarr VIII (Oris) · Dodixie IX-20 · Rens VI-8 · Hek VIII-12
-  log('FETCHING ORDERS AT SELECTED TRADE STATIONS (PARALLEL)...');
-  setProgress(0, 'Building typeId lists for each hub...', '');
+  // Local filtering is instant; remote fetching is the bottleneck.
+  log('BULK FETCHING REGION ORDERS (ALL HUBS IN PARALLEL)...');
+  setProgress(0, 'Fetching region orders for all selected hubs...', '');
 
   const regionOrderMaps = {};
-  let totalStationItems = 0;
 
-  // Per-hub progress callback — maps the sub-fetch's 0-100% into a slice of the overall progress.
-  // Split concurrency across hubs — with 5 hubs running in parallel, each at 50 per batch,
-  // we'd have 250 in-flight requests. Split to keep total ~50-80 concurrent.
-  const perHubConcurrency = Math.max(10, Math.floor(50 / hubs.length));
-  let hubsDone = 0;
+  // Fire all hub region-fetches in parallel — the single biggest speed win.
   const hubFetches = await Promise.all(
-    hubs.map(async (hubId) => {
-      const hub = HUBS[hubId];
-      const typeMap = await fetchStationOrders(
-        hubId, hub.station,
-        (subPct, msg) => {
-          // Only update if we're the current leading hub (avoids flicker from parallel progress)
-          const overallPct = ((hubsDone + subPct / 100) / hubs.length) * 40; // bulk fetch is 0-40% of total scan
-          setProgress(overallPct, `${hub.name}: ${msg}`, `${overallPct.toFixed(0)}%`);
-        },
-        'sell',                 // Hub Trading only needs sell prices for cross-hub comparison
-        perHubConcurrency
-      );
-      hubsDone++;
-      log(`${hub.name}: ${typeMap.size.toLocaleString()} items at station`);
-      totalStationItems += typeMap.size;
-      return { hubId, typeMap };
-    })
+    hubs.map(hubId => fetchRegionOrders(hubId).then(orders => ({ hubId, orders })))
   );
 
-  for (const { hubId, typeMap } of hubFetches) {
+  // Sequentially index each hub's orders into a typeMap keyed by typeId.
+  // The filter keeps only orders at the main trade station for that hub.
+  let totalOrders = 0;
+  for (const { hubId, orders } of hubFetches) {
     if (stopFlag) break;
+    const hub = HUBS[hubId];
+    totalOrders += orders.length;
+
+    const typeMap = new Map();
+    for (const o of orders) {
+      if (Number(o.location_id) !== hub.station) continue;
+      if (Number(o.system_id)   !== hub.system)  continue;
+      if (!typeMap.has(o.type_id)) typeMap.set(o.type_id, { sells: [], buys: [], depth: 0 });
+      const entry = typeMap.get(o.type_id);
+      if (o.is_buy_order) entry.buys.push(o);
+      else { entry.sells.push(o); entry.depth += Number(o.volume_remain); }
+    }
+    typeMap.forEach(v => {
+      v.sells.sort((a,b) => Number(a.price) - Number(b.price));
+      v.buys.sort((a,b)  => Number(b.price) - Number(a.price));
+    });
     regionOrderMaps[hubId] = typeMap;
+    log(`${hub.name}: ${orders.length.toLocaleString()} region orders · ${typeMap.size.toLocaleString()} items at station`);
   }
 
   if (stopFlag) { finishScan(); return; }
 
-  // Synthetic "totalOrders" — kept so existing logs/metrics continue working.
-  // This represents total station orders across all hubs (not the old
-  // region-wide count which was mostly discarded anyway).
-  const totalOrders = Object.values(regionOrderMaps).reduce((sum, tMap) => {
-    let n = 0;
-    tMap.forEach(v => { n += v.sells.length + v.buys.length; });
-    return sum + n;
-  }, 0);
-
-  // ── STEP 1b: Gap-fill is a no-op now ─────────────────────────────────
-  // The new primary fetch path already covers every active typeId in the
-  // region with targeted station-level orders. Nothing to gap-fill. Kept
-  // the UI toggle in place for back-compat but it no longer triggers work.
-  // Note: The primary station-targeted fetch already covers every active
-  // typeId in each hub's region. No gap-fill step needed. The Thorough scan
-  // checkbox in the UI no longer does anything and will be removed in a
-  // subsequent cleanup.
-
-  log('RUNNING CROSS-HUB PRICE COMPARISON...');
   setProgress(40, 'Comparing prices across hubs...', '');
+  log('RUNNING CROSS-HUB PRICE COMPARISON...');
 
   // Union of all typeIds present in any hub
   const allTypeIds = new Set();
@@ -2673,22 +2589,32 @@ async function startStationScan() {
   document.getElementById('stWorkingBadge').classList.add('active');
   document.getElementById('tab-st-count').textContent = '';
 
-  // ── Step 1: Station-filtered order fetch ─────────────────────────────
-  // Instead of pulling the entire region's ~200-400K orders and discarding
-  // ~80% locally, fetch per-typeId orders and keep only those at the target
-  // station. ~10x less data downloaded, much faster in practice.
-  stLog(`FETCHING ORDERS AT ${hub.name.toUpperCase()} (${hub.stationName})...`);
-  stSetProgress(0, `Building ${hub.name} typeId list...`, '');
-  const typeMap = await fetchStationOrders(hubId, hub.station, (pct, msg) => {
-    stSetProgress(pct, msg, `${pct.toFixed(0)}%`);
-  });
+  // ── Step 1: Bulk fetch region orders ─────────────────────────────────
+  // The /markets/{region}/orders/ endpoint pulls all orders in the region
+  // (all stations, all systems) at 1000 per page. We then filter locally to
+  // keep ONLY orders at the selected trade station. This is ESI's fastest
+  // market endpoint and gives us both buy and sell orders in a single call
+  // per page — critical for spread detection which needs both sides.
+  stLog(`FETCHING ${hub.name.toUpperCase()} REGION ORDERS...`);
+  stSetProgress(0, `Fetching ${hub.name} region orders...`, '');
+  const orders = await fetchRegionOrders(hubId);
   if (stStopFlag) { stFinish(); return; }
-  stLog(`${hub.name}: ${typeMap.size.toLocaleString()} items with orders at station`);
 
-  // Note: Station Trading no longer has a separate "thorough scan" / gap-fill
-  // step. The new primary fetch path already fetches every active typeId in
-  // the region, so there's nothing left to gap-fill. The checkbox is kept in
-  // the UI for compatibility but no longer does anything.
+  // ── Step 2: Filter to the main trade station and index by typeId ─────
+  stSetProgress(30, 'Indexing station orders...', '');
+  const typeMap = new Map();
+  for (const o of orders) {
+    if (Number(o.location_id) !== hub.station) continue;
+    if (!typeMap.has(o.type_id)) typeMap.set(o.type_id, { sells: [], buys: [] });
+    const e = typeMap.get(o.type_id);
+    if (o.is_buy_order) e.buys.push(o);
+    else e.sells.push(o);
+  }
+  typeMap.forEach(v => {
+    v.sells.sort((a,b) => Number(a.price) - Number(b.price));
+    v.buys.sort((a,b)  => Number(b.price) - Number(a.price));
+  });
+  stLog(`${hub.name}: ${orders.length.toLocaleString()} region orders · ${typeMap.size.toLocaleString()} items at station`);
 
   // ── Step 3: Find spread opportunities ─────────────────────────────────
   // Two distinct opportunity types emerge from the bid/ask prices:
