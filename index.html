@@ -1353,7 +1353,15 @@ async function fetchRegionOrders(regionId) {
     if (totalPages !== null && page >= totalPages) break;
     if (pageData.length < 1000) break;
     page++;
-    if (page > 50) break;
+    // Safety ceiling: ESI regions top out around 400 pages for order_type=all
+    // in The Forge. Cap at 500 to prevent runaway loops if X-Pages is missing.
+    // The previous 50-page cap was a latent bug that broke Station Trading:
+    // Jita needs ~200-400 pages to capture both buy AND sell orders, so the
+    // truncated bulk feed produced items with only one side of the market.
+    if (page > 500) {
+      log(`⚠ Region ${regionId}: hit safety cap of 500 pages — data may be partial`);
+      break;
+    }
   }
 
   // A region returning zero orders is a clear red flag — flag it to the user.
