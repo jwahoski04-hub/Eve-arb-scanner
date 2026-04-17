@@ -957,6 +957,49 @@ function catLabel(categoryId) {
   return CAT_LABEL_MAP[categoryId] || (categoryId != null ? `Cat ${categoryId}` : '—');
 }
 
+// Pick the correct ESI image variation for a given category.
+// ESI's image server serves different variations for different item categories:
+//   /icon   — the default for most items (modules, charges, commodities, etc.)
+//   /bp     — blueprint originals (returns blueprint document image)
+//   /bpc    — blueprint copies (different tint from BP)
+//   /render — ships/structures (3D render)
+//   /relic  — ancient relics
+// Using /icon on a blueprint returns 404 — hence the "missing icon" bug.
+// We use /bp for all category-9 (Blueprint) items; the market shows BPOs only
+// but /bp covers both BP and BPC visually.
+function iconUrl(typeId, categoryId) {
+  const base = `https://images.evetech.net/types/${typeId}`;
+  // Blueprints — both originals and copies, show the blueprint image
+  if (categoryId === 9) return `${base}/bp?size=32`;
+  // Everything else — default icon. Ships/structures also accept /icon
+  // (it's a smaller rendered version) which is what we want for a table.
+  return `${base}/icon?size=32`;
+}
+
+// onerror handler body — when the primary variation 404s, try fallback
+// variations in sequence before giving up. Exotic SKINs and a few obscure
+// categories have incomplete image coverage on ESI's server.
+//
+// Invoked inline from the <img onerror=...> attribute. this === the <img>.
+// We shuttle a small counter through the element's dataset so each failure
+// advances to the next fallback.
+function iconFallback(img) {
+  const typeId = img.dataset.typeId;
+  if (!typeId) { img.style.visibility = 'hidden'; return; }
+  const step = parseInt(img.dataset.fallbackStep || '0', 10);
+  const base = `https://images.evetech.net/types/${typeId}`;
+  const chain = [
+    `${base}/icon?size=32`,  // default icon
+    `${base}/render?size=32`, // ships/structures
+    `${base}/bp?size=32`,    // blueprints (in case category was misdetected)
+    `${base}/bpc?size=32`,   // blueprint copies
+    `${base}/relic?size=32`, // relics
+  ];
+  if (step >= chain.length) { img.style.visibility = 'hidden'; return; }
+  img.dataset.fallbackStep = step + 1;
+  img.src = chain[step];
+}
+
 // Shared category filter
 function applyCatFilter(results, cats, excluded) {
   // Specific categories selected → strict inclusion list (excluded set is ignored)
@@ -2324,7 +2367,7 @@ function renderTable() {
     const sellDaysStr = r.sellDays == null ? '—' : r.sellDays.toFixed(1) + 'd';
     return `<tr class="${rowCls}" data-key="${key}" onclick="toggleExpand('${key}',${r.typeId})">
       <td><span class="watchstar" onclick="event.stopPropagation();toggleWatch(${JSON.stringify(r).replace(/"/g,'&quot;')})">${isWatched?'★':'☆'}</span></td>
-      <td><div class="item-cell"><img class="item-icon" src="https://images.evetech.net/types/${r.typeId}/icon?size=32" width="24" height="24" alt="" loading="lazy" onerror="this.style.visibility='hidden'"><span class="item-name copyable" title="${name} — click to copy" data-copy-text="${name.replace(/"/g,'&quot;')}" onclick="event.stopPropagation();copyItemName(this)">${name}</span></div></td>
+      <td><div class="item-cell"><img class="item-icon" src="${iconUrl(r.typeId, r.categoryId)}" data-type-id="${r.typeId}" width="24" height="24" alt="" loading="lazy" onerror="iconFallback(this)"><span class="item-name copyable" title="${name} — click to copy" data-copy-text="${name.replace(/"/g,'&quot;')}" onclick="event.stopPropagation();copyItemName(this)">${name}</span></div></td>
       <td style="color:var(--text-muted);font-size:10px">${catLabel(r.categoryId)}</td>
       <td><span class="hub-pill ${bCls}">${r.buyHubName}</span><span class="arrow">→</span><span class="hub-pill ${sCls}">${r.sellHubName}</span></td>
       <td>${fmtISK(r.buyPrice)}</td>
@@ -2915,7 +2958,7 @@ function renderStTable() {
       ? `<span class="crossed-glyph" title="Instant arbitrage — buy from sell order, sell to buy order. Up to ${(r.flipUnits||0).toLocaleString()} units flippable at the touch.">⚡</span>`
       : '';
     return `<tr class="${rowClass}">
-      <td><div class="item-cell"><img class="item-icon" src="https://images.evetech.net/types/${r.typeId}/icon?size=32" width="24" height="24" alt="" loading="lazy" onerror="this.style.visibility='hidden'"><span class="item-name copyable" title="${r.name} — click to copy" data-copy-text="${r.name.replace(/"/g,'&quot;')}">${crossedGlyph}${r.name}</span></div></td>
+      <td><div class="item-cell"><img class="item-icon" src="${iconUrl(r.typeId, r.categoryId)}" data-type-id="${r.typeId}" width="24" height="24" alt="" loading="lazy" onerror="iconFallback(this)"><span class="item-name copyable" title="${r.name} — click to copy" data-copy-text="${r.name.replace(/"/g,'&quot;')}">${crossedGlyph}${r.name}</span></div></td>
       <td style="color:var(--text-muted);font-size:10px">${catLabel(r.categoryId)}</td>
       <td>${fmtISK(r.buyNow)}</td>
       <td>${fmtISK(r.sellNow)}</td>
