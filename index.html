@@ -333,6 +333,15 @@ html,body{
 .progress-info{display:flex;justify-content:space-between;}
 .progress-text{font-family:var(--mono);font-size:10px;color:var(--text-muted);}
 .progress-pct{font-family:var(--mono);font-size:10px;color:var(--cyan);}
+/* Timer row — small monospace stats tucked below the main progress text */
+.progress-timer{
+  display:flex;justify-content:space-between;gap:12px;
+  font-family:var(--mono);font-size:10px;color:var(--text-dim);margin-top:3px;
+}
+.progress-timer .timer-item{display:inline-flex;gap:5px;align-items:center;}
+.progress-timer .timer-label{color:var(--text-dim);}
+.progress-timer .timer-val{color:var(--cyan);font-variant-numeric:tabular-nums;}
+.progress-timer .timer-val.eta{color:var(--amber);}
 .log-bar{font-family:var(--mono);font-size:10px;color:var(--text-muted);border-left:2px solid var(--border-bright);
   padding-left:8px;margin-bottom:1rem;height:14px;overflow:hidden;}
 .cursor{animation:blink 0.8s infinite;}
@@ -496,7 +505,7 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
 
 /* STATION TRADING */
 .st-controls{background:var(--surface);border:1px solid var(--border);border-radius:3px;padding:1rem 1.25rem;margin-bottom:1rem;}
-.st-ctrl-grid{display:grid;grid-template-columns:repeat(6,minmax(110px,160px)) auto;gap:8px;align-items:end;margin-bottom:1rem;}
+.st-ctrl-grid{display:grid;grid-template-columns:repeat(7,minmax(110px,160px)) auto;gap:8px;align-items:end;margin-bottom:1rem;}
 /* Station Trading scan button wrapper — fixed width matching Hub Trading,
    centered inside its "auto" grid cell (which is allowed to grow by the
    minmax ceilings on the left). */
@@ -571,7 +580,7 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
   <div class="panel active" id="panel-results">
 
     <div class="controls-panel">
-      <div class="ctrl-grid" style="grid-template-columns:repeat(10,minmax(0,1fr)) auto;">
+      <div class="ctrl-grid" style="grid-template-columns:repeat(11,minmax(0,1fr)) auto;">
         <div class="ctrl"><div class="ctrl-label">Min Margin %</div><input type="number" id="minMargin" value="5" min="0" max="100" step="0.5" /></div>
         <div class="ctrl"><div class="ctrl-label">Tax % (broker+tx)</div><input type="number" id="taxRate" value="3.6" min="0" max="15" step="0.1" /></div>
         <div class="ctrl"><div class="ctrl-label">Min Daily Vol</div><input type="number" id="minVol" value="10" min="0" /></div>
@@ -595,6 +604,14 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
             <option value="3" selected>3× avg</option>
             <option value="5">5× avg</option>
             <option value="10">10× avg</option>
+          </select>
+        </div>
+        <div class="ctrl"><div class="ctrl-label" title="Drops items with zero real market activity — saves time on history fetches">Exclude Dormant</div>
+          <select id="dormantFilter">
+            <option value="off">Off — keep all</option>
+            <option value="30d" selected>Zero 30d vol</option>
+            <option value="7d">Zero 7d vol</option>
+            <option value="1d">Zero 1d vol</option>
           </select>
         </div>
         <div class="ctrl"><div class="ctrl-label">Sort By</div>
@@ -674,6 +691,10 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
         <div class="progress-text" id="progressText">Select hubs and click SCAN ALL — bulk region fetch active</div>
         <div class="progress-pct" id="progressPct"></div>
       </div>
+      <div class="progress-timer" id="progressTimer" style="display:none">
+        <span class="timer-item"><span class="timer-label">Elapsed</span><span class="timer-val" id="elapsedTime">0:00</span></span>
+        <span class="timer-item"><span class="timer-label">ETA</span><span class="timer-val eta" id="etaTime">—</span></span>
+      </div>
     </div>
     <div class="log-bar" id="logBar">&gt; AWAITING SCAN COMMAND<span class="cursor">_</span></div>
 
@@ -740,6 +761,14 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
             <option value="5">≥ 5</option>
           </select>
         </div>
+        <div class="ctrl"><div class="ctrl-label" title="Drops items with zero real market activity — saves time on history fetches">Exclude Dormant</div>
+          <select id="st-dormantFilter">
+            <option value="off">Off — keep all</option>
+            <option value="30d" selected>Zero 30d vol</option>
+            <option value="7d">Zero 7d vol</option>
+            <option value="1d">Zero 1d vol</option>
+          </select>
+        </div>
         <div class="ctrl"><div class="ctrl-label">Vol Window</div>
           <div class="vol-toggle" role="group">
             <button class="vol-btn" data-st-vol-window="1" onclick="stSetVolWindow(1)">1d</button>
@@ -794,6 +823,10 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
       <div class="progress-info">
         <div class="progress-text" id="stProgressText"></div>
         <div class="progress-pct" id="stProgressPct"></div>
+      </div>
+      <div class="progress-timer" id="stProgressTimer" style="display:none">
+        <span class="timer-item"><span class="timer-label">Elapsed</span><span class="timer-val" id="stElapsedTime">0:00</span></span>
+        <span class="timer-item"><span class="timer-label">ETA</span><span class="timer-val eta" id="stEtaTime">—</span></span>
       </div>
     </div>
     <div class="log-bar" id="stLogBar" style="margin-bottom:1rem">&gt; SELECT A STATION AND CLICK SCAN<span class="cursor">_</span></div>
@@ -1241,9 +1274,74 @@ async function fetchRegionOrdersPage(regionId, page, maxAttempts = 3) {
   return null;
 }
 
-// Global progress state for the bulk fetch phase. Each hub reports its
-// own pagesFetched / totalPages so the aggregate can drive the bar.
-const bulkProgress = {};
+// ============================================================
+// ELAPSED / ETA TIMER
+// A 1Hz ticker updates the elapsed clock and, once we have >5% of
+// progress, estimates ETA based on rate (elapsed / percent). The
+// estimate smooths as more data points come in, so it'll jitter
+// early on and settle down once a stable phase is running.
+// ============================================================
+let timerInterval = null;
+let timerStart    = 0;
+let timerTab      = 'hub';        // 'hub' or 'station'
+let timerLastPct  = 0;            // latest reported progress (0-100)
+
+function formatDuration(ms) {
+  if (!ms || ms < 0 || !isFinite(ms)) return '—';
+  const totalSec = Math.round(ms / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+  return `${m}:${String(s).padStart(2,'0')}`;
+}
+
+function startTimer(tab) {
+  stopTimer();
+  timerTab     = tab;
+  timerStart   = Date.now();
+  timerLastPct = 0;
+  const timerEl = document.getElementById(tab === 'station' ? 'stProgressTimer' : 'progressTimer');
+  if (timerEl) timerEl.style.display = '';
+  const etaEl     = document.getElementById(tab === 'station' ? 'stEtaTime' : 'etaTime');
+  const elapsedEl = document.getElementById(tab === 'station' ? 'stElapsedTime' : 'elapsedTime');
+  if (etaEl)     etaEl.textContent     = '—';
+  if (elapsedEl) elapsedEl.textContent = '0:00';
+  timerInterval = setInterval(tickTimer, 1000);
+}
+
+function tickTimer() {
+  if (!timerStart) return;
+  const elapsed = Date.now() - timerStart;
+  const elapsedEl = document.getElementById(timerTab === 'station' ? 'stElapsedTime' : 'elapsedTime');
+  const etaEl     = document.getElementById(timerTab === 'station' ? 'stEtaTime' : 'etaTime');
+  if (elapsedEl) elapsedEl.textContent = formatDuration(elapsed);
+  if (etaEl) {
+    // Need some progress before we can estimate meaningfully. Below 5% the
+    // ETA swings wildly — just show "calculating..." to avoid scary numbers.
+    if (timerLastPct < 5) {
+      etaEl.textContent = 'calculating…';
+    } else if (timerLastPct >= 100) {
+      etaEl.textContent = 'done';
+    } else {
+      const estTotal = elapsed / (timerLastPct / 100);
+      const remaining = Math.max(0, estTotal - elapsed);
+      etaEl.textContent = formatDuration(remaining);
+    }
+  }
+}
+
+function updateTimerPct(pct) {
+  // Called from setProgress / stSetProgress so the timer always knows the
+  // current percent without us having to pass it separately each tick.
+  timerLastPct = pct;
+}
+
+function stopTimer() {
+  if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+  timerStart   = 0;
+  timerLastPct = 0;
+}
 
 // Which tab is currently driving the bulk fetch determines which progress
 // bar gets updated. Set by the caller before invoking fetchRegionOrders
@@ -1684,6 +1782,8 @@ function setProgress(pct, text, sub) {
   document.getElementById('progressBar').style.width = Math.min(100, pct) + '%';
   document.getElementById('progressText').textContent = text;
   document.getElementById('progressPct').textContent = sub || '';
+  // Sync the Hub Trading timer if it's the active one
+  if (timerTab === 'hub' && timerStart) updateTimerPct(pct);
 }
 // Click-to-copy for item names — matches Market Supply tool pattern.
 // Shared copy routine so it works whether invoked by the document delegate
@@ -1795,6 +1895,7 @@ function stopScan() {
   document.getElementById('scanBtn').classList.remove('running');
   document.getElementById('stopBtn').style.display = 'none';
   document.getElementById('workingBadge').classList.remove('active');
+  stopTimer();
   scanActive = false;
 }
 
@@ -1812,6 +1913,7 @@ async function startScan() {
   bulkProgressTab    = 'hub';
   bulkProgressMaxPct = 40;
   scanStartTime = Date.now();
+  startTimer('hub');
 
   document.getElementById('scanBtn').classList.add('running');
   document.getElementById('scanBtn').disabled = true;
@@ -1825,6 +1927,7 @@ async function startScan() {
   const cargo       = parseFloat(document.getElementById('cargoM3').value) || 10000;
   const minSellOrds = parseInt(document.getElementById('minSellOrders').value) || 1;
   const maxPriceMult = parseFloat(document.getElementById('maxPriceMult').value) || 0;
+  const dormantFilter = document.getElementById('dormantFilter').value || 'off';
 
   // ── STEP 1: Fetch ALL orders for each region in bulk — ALL HUBS IN PARALLEL ──
   log('BULK FETCHING ALL REGION ORDERS IN PARALLEL...');
@@ -2013,6 +2116,7 @@ async function startScan() {
   // Filtering uses the CURRENTLY SELECTED volume window (currentVolWindow).
   // Items below the threshold in the chosen window are dropped.
   let outlierStripped = 0;
+  let dormantStripped = 0;
   const filtered = opportunities.filter(o => {
     const windows = histMap[o.typeId] || { v1:0, v7:0, v30:0 };
     o.dailyVol1  = windows.v1;
@@ -2022,6 +2126,15 @@ async function startScan() {
     o.volume = vol; // legacy alias — used by Score
     // Sell Days — how many days of supply the origin station's stock represents
     o.sellDays = (vol > 0 && o.sellVolume != null) ? (o.sellVolume / vol) : null;
+    // Dormancy filter — drops items with no real market activity. Checks the
+    // selected window ONLY (1d/7d/30d). "Zero 30d vol" is the safest default;
+    // 7d and 1d are more aggressive (drop items trading less than weekly/daily).
+    if (dormantFilter !== 'off') {
+      const check = dormantFilter === '1d'  ? windows.v1  :
+                    dormantFilter === '7d'  ? windows.v7  :
+                                              windows.v30;
+      if (check === 0) { dormantStripped++; return false; }
+    }
     if (vol < minVol) return false;
     // Outlier filter: skip if either price exceeds maxPriceMult × recent avg
     if (maxPriceMult > 0) {
@@ -2034,6 +2147,7 @@ async function startScan() {
     o.score = Math.log10(Math.max(1, vol)) * o.margin * 100;
     return true;
   });
+  if (dormantStripped > 0) log(`DORMANT FILTER: removed ${dormantStripped} items with zero ${dormantFilter} volume`);
   if (outlierStripped > 0) log(`OUTLIER FILTER: removed ${outlierStripped} manipulated price opportunities`);
 
   if (stopFlag) { allResults = filtered; finishScan(); return; }
@@ -2079,6 +2193,7 @@ function finishScan() {
   document.getElementById('scanBtn').classList.remove('running');
   document.getElementById('stopBtn').style.display = 'none';
   document.getElementById('workingBadge').classList.remove('active');
+  stopTimer();
 }
 
 // ============================================================
@@ -2434,6 +2549,8 @@ function stSetProgress(pct, text, sub) {
   document.getElementById('stProgressBar').style.width = Math.min(100,pct)+'%';
   document.getElementById('stProgressText').textContent = text;
   document.getElementById('stProgressPct').textContent = sub||'';
+  // Sync the Station Trading timer if it's the active one
+  if (timerTab === 'station' && timerStart) updateTimerPct(pct);
 }
 
 function toggleStationScan() { if (!stScanActive) startStationScan(); }
@@ -2464,6 +2581,7 @@ function stopStationScan() {
   document.getElementById('stScanBtn').classList.remove('running');
   document.getElementById('stStopBtn').style.display = 'none';
   document.getElementById('stWorkingBadge').classList.remove('active');
+  stopTimer();
   stScanActive = false;
 }
 
@@ -2475,6 +2593,7 @@ async function startStationScan() {
   const minVol      = parseInt(document.getElementById('st-minVol').value)||0;
   const minProfit   = parseMoneyInput('st-minProfit');
   const minBuyOrds  = parseInt(document.getElementById('st-minBuyOrders').value)||1;
+  const stDormantFilter = document.getElementById('st-dormantFilter').value || 'off';
 
   stScanActive = true; stStopFlag = false; stResults = []; stScanAllResults = [];
   // Clear any stale per-hub progress from a previous scan (in either tab)
@@ -2485,6 +2604,7 @@ async function startStationScan() {
   // spread scan, history, and name resolution).
   bulkProgressTab    = 'station';
   bulkProgressMaxPct = 20;
+  startTimer('station');
   document.getElementById('stScanBtn').classList.add('running');
   document.getElementById('stScanBtn').disabled = true;
   document.getElementById('stStopBtn').style.display = '';
@@ -2696,11 +2816,20 @@ async function startStationScan() {
 
   // ── Step 5: Filter by vol, score, resolve names ───────────────────────
   stSetProgress(85, 'Resolving names...', '85%');
+  let stDormantStripped = 0;
   const passing = candidates.filter(c => {
+    // Dormancy filter — drops items with zero volume in the selected window
+    if (stDormantFilter !== 'off') {
+      const check = stDormantFilter === '1d'  ? c.dailyVol1  :
+                    stDormantFilter === '7d'  ? c.dailyVol7  :
+                                                c.dailyVol30;
+      if (check === 0) { stDormantStripped++; return false; }
+    }
     if (c.volume < minVol) return false;
     c.score = Math.log10(Math.max(1, c.volume)) * c.roi * 100;
     return true;
   });
+  if (stDormantStripped > 0) stLog(`Dormant filter: removed ${stDormantStripped} items with zero ${stDormantFilter} volume`);
   stLog(`Volume filter: ${passing.length}/${candidates.length} passed min vol ${minVol}`);
 
   const resolveIds = [...new Set(passing.map(c => c.typeId))];
@@ -2726,6 +2855,7 @@ function stFinish() {
   document.getElementById('stScanBtn').classList.remove('running');
   document.getElementById('stStopBtn').style.display = 'none';
   document.getElementById('stWorkingBadge').classList.remove('active');
+  stopTimer();
 }
 
 function sortStTable(key) {
