@@ -175,6 +175,21 @@ html,body{
 .haul-stat-val{font-family:var(--mono);font-size:13px;color:var(--amber);}
 
 .hub-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px;}
+/* Thorough-scan checkbox — placed inline with Hubs/Station row. Cautionary
+   amber palette signals "enable only when needed — this is slow". */
+.thorough-toggle{
+  display:inline-flex;align-items:center;gap:6px;margin-left:auto;padding:3px 10px;
+  border:1px solid var(--border);border-radius:2px;cursor:pointer;user-select:none;
+  font-family:var(--mono);font-size:10px;color:var(--text-muted);
+  transition:all 0.15s;
+}
+.thorough-toggle:hover{border-color:var(--amber-dim);color:var(--text);}
+.thorough-toggle input[type=checkbox]{accent-color:var(--amber);cursor:pointer;margin:0;}
+.thorough-toggle:has(input:checked){
+  border-color:rgba(255,166,43,0.5);color:var(--amber);background:var(--amber-dim);
+}
+.thorough-hint{color:var(--text-dim);font-size:9px;letter-spacing:0.02em;margin-left:3px;}
+.thorough-toggle:has(input:checked) .thorough-hint{color:var(--amber);opacity:0.75;}
 .hub-label{font-family:var(--mono);font-size:9px;color:var(--text-muted);letter-spacing:0.08em;text-transform:uppercase;margin-right:2px;}
 .hub-check{display:flex;align-items:center;gap:4px;cursor:pointer;font-family:var(--mono);font-size:10px;color:var(--text);
   padding:3px 8px;border:1px solid var(--border);border-radius:2px;transition:all 0.15s;user-select:none;
@@ -636,6 +651,10 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
         <label class="hub-check active c-dodixie" id="hub-10000032" onclick="toggleHub('10000032',this)"><input type="checkbox" value="10000032" checked /><div class="hub-dot"></div>DODIXIE</label>
         <label class="hub-check active c-hek" id="hub-10000042" onclick="toggleHub('10000042',this)"><input type="checkbox" value="10000042" checked /><div class="hub-dot"></div>HEK</label>
         <label class="hub-check active c-rens" id="hub-10000030" onclick="toggleHub('10000030',this)"><input type="checkbox" value="10000030" checked /><div class="hub-dot"></div>RENS</label>
+        <label class="thorough-toggle" title="Fetches individual orders for every typeId missing from the bulk feed (~5-10× slower, catches very recently posted orders the 5-min ESI cache missed). Off by default — bulk feed already covers 99%+ of activity.">
+          <input type="checkbox" id="thoroughScan" />
+          <span>Thorough scan <span class="thorough-hint">(slower, catches fresh orders)</span></span>
+        </label>
       </div>
 
       <div class="cat-row" style="margin-top:8px;">
@@ -759,6 +778,10 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
         <label class="hub-check c-dodixie" id="st-hub-10000032" onclick="stToggleHub('10000032',this)"><input type="radio" name="stHub" value="10000032" /><div class="hub-dot"></div>DODIXIE</label>
         <label class="hub-check c-hek" id="st-hub-10000042" onclick="stToggleHub('10000042',this)"><input type="radio" name="stHub" value="10000042" /><div class="hub-dot"></div>HEK</label>
         <label class="hub-check c-rens" id="st-hub-10000030" onclick="stToggleHub('10000030',this)"><input type="radio" name="stHub" value="10000030" /><div class="hub-dot"></div>RENS</label>
+        <label class="thorough-toggle" title="Fetches individual orders for every typeId active in this region but missing from the bulk feed. Significantly slower (can add 30-90s at Jita) but catches recently posted orders the bulk feed's 5-min cache missed. Off by default.">
+          <input type="checkbox" id="st-thoroughScan" />
+          <span>Thorough scan <span class="thorough-hint">(slower, catches fresh orders)</span></span>
+        </label>
       </div>
       <div class="cat-row" style="margin-top:8px;">
         <span class="hub-label">Categories:</span>
@@ -1159,12 +1182,15 @@ function parseRateHeaders(headers) {
 }
 
 async function checkThrottle() {
-  const floor = parseInt(document.getElementById('throttleFloor').value);
-  if (errRemain < floor || rateRemain < 10) {
+  // Only sleep when the budget is CRITICALLY low. The old logic (sleep whenever
+  // errRemain < floor) was too aggressive because it sleeps serially for every
+  // call inside a parallel batch, multiplying the delay. ESI's real defense
+  // against abuse is its own error-limit counter — we just need to not drive
+  // it to zero, not slow down pre-emptively.
+  if (errRemain < 15 || rateRemain < 5) {
     isThrottled = true;
     updateRateUI();
-    // Back off proportionally — lower remaining = longer wait
-    const delay = errRemain < 20 ? 2000 : errRemain < floor ? 500 : 200;
+    const delay = errRemain < 5 ? 1500 : 400;
     await sleep(delay);
   } else {
     isThrottled = false;
@@ -1173,26 +1199,20 @@ async function checkThrottle() {
 
 // Throttled raw fetch — use this instead of fetch() for endpoints where we
 // don't want full esiFetch caching behavior (bulk region orders, gap-fill
-// per-typeId orders) but DO want rate-limit awareness. This was the missing
-// piece that caused "scan 2 returns wildly different counts than scan 1" —
-// raw fetches bypassed the throttle and hammered ESI until it started 420ing.
+// per-typeId orders) but DO want rate-limit awareness.
+//
+// Intentionally does NOT call checkThrottle() per request. The caller should
+// call checkThrottle() once before dispatching a parallel batch — if we sleep
+// inside every parallel request, a 50-wide batch silently adds 25+ seconds of
+// delay even when most requests would have succeeded without waiting.
+//
+// Also intentionally does NOT decrement errRemain on failure. ESI sends the
+// authoritative value in X-ESI-Error-Limit-Remain; local estimates were causing
+// runaway over-throttling by double-counting the same error.
 async function throttledFetch(url, options) {
-  await checkThrottle();
   if (stopFlag || stStopFlag) throw new Error('STOPPED');
-  let resp;
-  try {
-    resp = await fetch(url, options);
-  } catch(e) {
-    errRemain = Math.max(0, errRemain - 2);
-    updateRateUI();
-    throw e;
-  }
+  const resp = await fetch(url, options);
   parseRateHeaders(resp.headers);
-  if (!resp.ok) {
-    // Decrement error budget locally too, in case server didn't send headers
-    errRemain = Math.max(0, errRemain - 5);
-    updateRateUI();
-  }
   return resp;
 }
 
@@ -1202,14 +1222,14 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 // ESI FETCH WITH CACHING + ETAG + RATE LIMIT
 // ============================================================
 async function esiFetch(url) {
-  await checkThrottle();
   if (stopFlag) throw new Error('STOPPED');
 
   const cacheKey = url;
   const cached = await dbGet(cacheKey);
   const now = Date.now();
 
-  // 1. Fresh cache hit — return immediately, no request
+  // 1. Fresh cache hit — return immediately, NO throttle check needed.
+  // (Reading our own IndexedDB is not an ESI request.)
   if (cached && cached.expires && now < cached.expires) {
     cacheHits++;
     bytesSaved += cached.size || 0;
@@ -1217,7 +1237,11 @@ async function esiFetch(url) {
     return cached.data;
   }
 
-  // 2. Build headers — include ETag for conditional request
+  // Cache miss or stale — now we'll hit the network, so check throttle.
+  await checkThrottle();
+  if (stopFlag) throw new Error('STOPPED');
+
+  // Build headers — include ETag for conditional request if we have stale cache
   const headers = {};
   if (cached && cached.etag) headers['If-None-Match'] = cached.etag;
 
@@ -1890,65 +1914,65 @@ async function startScan() {
 
   if (stopFlag) { finishScan(); return; }
 
-  // ── STEP 1b: Gap-fill — per-typeId fetch for items missing from bulk ──────
-  // ESI's bulk endpoint has a ~5 min cache and can miss recently-posted orders.
-  // For any typeId present in one hub's typeMap but absent in another hub's typeMap,
-  // do a direct per-typeId fetch for the missing hub to catch those orders.
-  log('CHECKING FOR BULK FEED GAPS...');
-  const allKnownTypeIds = new Set();
-  Object.values(regionOrderMaps).forEach(m => m.forEach((_, tid) => allKnownTypeIds.add(tid)));
-
+  // ── STEP 1b: Gap-fill (opt-in "Thorough scan") ────────────────────────
+  // ESI's bulk endpoint has a ~5 min cache and can miss very recently posted
+  // orders. Gap-fill sends one request per typeId that's present at one hub
+  // but not another to catch them — but that's ~2,000-10,000 extra requests
+  // to catch maybe a dozen new orders. Off by default; users can enable it
+  // via the "Thorough scan" checkbox when accuracy matters more than speed.
+  const thoroughScan = document.getElementById('thoroughScan')?.checked;
   let gapsFilled = 0;
   let gapFailures = 0;
   let gapAttempts = 0;
-  for (const hubId of hubs) {
-    if (stopFlag) break;
-    const hub  = HUBS[hubId];
-    const tMap = regionOrderMaps[hubId];
-    // Find typeIds active in OTHER hubs but missing here
-    const missingHere = [];
-    for (const tid of allKnownTypeIds) {
-      if (!tMap.has(tid)) missingHere.push(tid);
-    }
-    if (!missingHere.length) continue;
-    log(`${hub.name}: bulk missed ${missingHere.length} typeIds — fetching individually...`);
+  if (thoroughScan) {
+    log('THOROUGH SCAN: checking for bulk feed gaps...');
+    const allKnownTypeIds = new Set();
+    Object.values(regionOrderMaps).forEach(m => m.forEach((_, tid) => allKnownTypeIds.add(tid)));
 
-    // Adaptive batch size — smaller batches when the error budget is drained.
-    // Prevents a flurry of 50 parallel requests from bottoming out ESI at the
-    // worst possible time (right after scan 1 depleted the budget).
-    for (let i = 0; i < missingHere.length && !stopFlag; ) {
-      const batchSize = errRemain < 50 ? 10 : errRemain < 80 ? 25 : 50;
-      const batch = missingHere.slice(i, i + batchSize);
-      i += batchSize;
-      await Promise.all(batch.map(async tid => {
-        gapAttempts++;
-        try {
-          const resp = await throttledFetch(
-            `https://esi.evetech.net/latest/markets/${hubId}/orders/?order_type=sell&type_id=${tid}`
-          );
-          if (!resp.ok) { gapFailures++; return; }
-          const orders = await resp.json();
-          const stationOrders = orders.filter(o =>
-            Number(o.location_id) === hub.station &&
-            Number(o.system_id)   === hub.system  &&
-            !o.is_buy_order
-          );
-          if (!stationOrders.length) return;
-          stationOrders.sort((a, b) => Number(a.price) - Number(b.price));
-          const depth = stationOrders.reduce((s, o) => s + Number(o.volume_remain), 0);
-          tMap.set(tid, { sells: stationOrders, buys: [], depth });
-          gapsFilled++;
-        } catch(e) { gapFailures++; }
-      }));
+    for (const hubId of hubs) {
+      if (stopFlag) break;
+      const hub  = HUBS[hubId];
+      const tMap = regionOrderMaps[hubId];
+      // Find typeIds active in OTHER hubs but missing here
+      const missingHere = [];
+      for (const tid of allKnownTypeIds) {
+        if (!tMap.has(tid)) missingHere.push(tid);
+      }
+      if (!missingHere.length) continue;
+      log(`${hub.name}: bulk missed ${missingHere.length} typeIds — fetching individually...`);
+
+      // Fire 50 requests per batch with ONE throttle check per batch.
+      for (let i = 0; i < missingHere.length && !stopFlag; i += 50) {
+        const batch = missingHere.slice(i, i + 50);
+        await checkThrottle();
+        if (stopFlag) break;
+        await Promise.all(batch.map(async tid => {
+          gapAttempts++;
+          try {
+            const resp = await throttledFetch(
+              `https://esi.evetech.net/latest/markets/${hubId}/orders/?order_type=sell&type_id=${tid}`
+            );
+            if (!resp.ok) { gapFailures++; return; }
+            const orders = await resp.json();
+            const stationOrders = orders.filter(o =>
+              Number(o.location_id) === hub.station &&
+              Number(o.system_id)   === hub.system  &&
+              !o.is_buy_order
+            );
+            if (!stationOrders.length) return;
+            stationOrders.sort((a, b) => Number(a.price) - Number(b.price));
+            const depth = stationOrders.reduce((s, o) => s + Number(o.volume_remain), 0);
+            tMap.set(tid, { sells: stationOrders, buys: [], depth });
+            gapsFilled++;
+          } catch(e) { gapFailures++; }
+        }));
+      }
+      if (gapsFilled > 0) log(`Gap-fill complete: added ${gapsFilled} items to station maps`);
     }
-    if (gapsFilled > 0) log(`Gap-fill complete: added ${gapsFilled} items to station maps`);
-  }
-  // If gap-fill had a high failure rate, warn about incomplete data.
-  // This is exactly what caused scan 2 to return a wildly different opportunity
-  // count than scan 1 — gap-fill was partially failing and nobody knew.
-  if (gapAttempts > 0 && gapFailures / gapAttempts > 0.1) {
-    const failPct = Math.round((gapFailures / gapAttempts) * 100);
-    log(`⚠ GAP-FILL ${failPct}% FAILURE RATE (${gapFailures}/${gapAttempts}) — results may be incomplete. Wait 60s and rescan for accuracy.`);
+    if (gapAttempts > 0 && gapFailures / gapAttempts > 0.1) {
+      const failPct = Math.round((gapFailures / gapAttempts) * 100);
+      log(`⚠ GAP-FILL ${failPct}% FAILURE RATE (${gapFailures}/${gapAttempts}) — results may be incomplete. Wait 60s and rescan.`);
+    }
   }
   log('RUNNING CROSS-HUB PRICE COMPARISON...');
   setProgress(40, 'Comparing prices across hubs...', '');
@@ -2612,72 +2636,71 @@ async function startStationScan() {
   });
   stLog(`${hub.name}: ${orders.length.toLocaleString()} orders · ${typeMap.size.toLocaleString()} items at station`);
 
-  // ── Step 2b: Gap-fill — fetch all active typeIds for this region ──────
-  // The bulk feed can miss items (ESI cache lag). We get the full list of
-  // active typeIds from the region types endpoint and fetch any that are
-  // absent from our typeMap individually.
-  stSetProgress(25, 'Checking for items missed by bulk fetch...', '');
-  let allTypeIds = [];
-  try {
-    let page = 1;
-    while (!stStopFlag) {
-      const resp = await throttledFetch(
-        `https://esi.evetech.net/latest/markets/${hubId}/types/?page=${page}`
-      );
-      if (!resp.ok) break;
-      const data = await resp.json();
-      if (!Array.isArray(data) || !data.length) break;
-      allTypeIds = allTypeIds.concat(data);
-      if (data.length < 1000) break;
-      page++;
-    }
-  } catch(e) {}
-
-  const missingIds = allTypeIds.filter(id => !typeMap.has(id));
-  stLog(`Gap-fill: ${allTypeIds.length.toLocaleString()} active types · ${missingIds.length.toLocaleString()} missing from bulk — fetching...`);
-
-  // Fetch missing items via throttledFetch with adaptive batch sizing.
-  // When the error budget is low, smaller batches prevent us from hammering
-  // ESI into a hard 420 (which is what caused scan 2 to return 8 items when
-  // scan 1 returned 160 — gap-fill was silently dropping most requests).
+  // ── Step 2b: Gap-fill (opt-in "Thorough scan") ────────────────────────
+  // This is the biggest single time sink in a station scan. For a region like
+  // The Forge (Jita) it issues ~10,000 individual per-typeId requests to catch
+  // a handful of recently-posted orders the bulk feed's 5-min cache missed.
+  // Default off — users who want it enable the "Thorough scan" checkbox.
+  const stThorough = document.getElementById('st-thoroughScan')?.checked;
   let stGapFailures = 0;
   let stGapAttempts = 0;
-  for (let i = 0; i < missingIds.length && !stStopFlag; ) {
-    const batchSize = errRemain < 50 ? 10 : errRemain < 80 ? 25 : 50;
-    const batch = missingIds.slice(i, i + batchSize);
-    i += batchSize;
-    stSetProgress(25 + (i / missingIds.length) * 15,
-      `Gap-fill: ${i}/${missingIds.length} items...`, '');
-    await Promise.all(batch.map(async typeId => {
-      stGapAttempts++;
-      try {
+  if (stThorough) {
+    stSetProgress(25, 'THOROUGH SCAN: checking for items missed by bulk fetch...', '');
+    let allTypeIds = [];
+    try {
+      let page = 1;
+      while (!stStopFlag) {
         const resp = await throttledFetch(
-          `https://esi.evetech.net/latest/markets/${hubId}/orders/?order_type=all&type_id=${typeId}`
+          `https://esi.evetech.net/latest/markets/${hubId}/types/?page=${page}`
         );
-        if (!resp.ok) { stGapFailures++; return; }
-        const itemOrders = await resp.json();
-        const stationOrders = itemOrders.filter(o =>
-          Number(o.location_id) === hub.station
-        );
-        if (!stationOrders.length) return;
-        if (!typeMap.has(typeId)) typeMap.set(typeId, { sells:[], buys:[] });
-        const e = typeMap.get(typeId);
-        for (const o of stationOrders) {
-          if (o.is_buy_order) e.buys.push(o);
-          else e.sells.push(o);
-        }
-        e.sells.sort((a,b) => Number(a.price) - Number(b.price));
-        e.buys.sort((a,b)  => Number(b.price) - Number(a.price));
-      } catch(e) { stGapFailures++; }
-    }));
-  }
-  stLog(`${hub.name}: ${typeMap.size.toLocaleString()} items after gap-fill`);
-  // High failure rate means the typeMap is incomplete → opportunity count will
-  // be wildly different from a healthy scan. Warn the user so they don't trust
-  // apples-to-oranges comparisons between consecutive scans.
-  if (stGapAttempts > 0 && stGapFailures / stGapAttempts > 0.1) {
-    const failPct = Math.round((stGapFailures / stGapAttempts) * 100);
-    stLog(`⚠ GAP-FILL ${failPct}% FAILURE RATE (${stGapFailures}/${stGapAttempts}) — many items missing. Wait 60s and rescan for a complete picture.`);
+        if (!resp.ok) break;
+        const data = await resp.json();
+        if (!Array.isArray(data) || !data.length) break;
+        allTypeIds = allTypeIds.concat(data);
+        if (data.length < 1000) break;
+        page++;
+      }
+    } catch(e) {}
+
+    const missingIds = allTypeIds.filter(id => !typeMap.has(id));
+    stLog(`Gap-fill: ${allTypeIds.length.toLocaleString()} active types · ${missingIds.length.toLocaleString()} missing from bulk — fetching...`);
+
+    // Fetch missing items in 50-wide parallel batches. One throttle check per
+    // batch instead of one per request — dramatically faster when budget is mid-range.
+    for (let i = 0; i < missingIds.length && !stStopFlag; i += 50) {
+      const batch = missingIds.slice(i, i + 50);
+      await checkThrottle();
+      if (stStopFlag) break;
+      stSetProgress(25 + (i / missingIds.length) * 15,
+        `Gap-fill: ${i}/${missingIds.length} items...`, '');
+      await Promise.all(batch.map(async typeId => {
+        stGapAttempts++;
+        try {
+          const resp = await throttledFetch(
+            `https://esi.evetech.net/latest/markets/${hubId}/orders/?order_type=all&type_id=${typeId}`
+          );
+          if (!resp.ok) { stGapFailures++; return; }
+          const itemOrders = await resp.json();
+          const stationOrders = itemOrders.filter(o =>
+            Number(o.location_id) === hub.station
+          );
+          if (!stationOrders.length) return;
+          if (!typeMap.has(typeId)) typeMap.set(typeId, { sells:[], buys:[] });
+          const e = typeMap.get(typeId);
+          for (const o of stationOrders) {
+            if (o.is_buy_order) e.buys.push(o);
+            else e.sells.push(o);
+          }
+          e.sells.sort((a,b) => Number(a.price) - Number(b.price));
+          e.buys.sort((a,b)  => Number(b.price) - Number(a.price));
+        } catch(e) { stGapFailures++; }
+      }));
+    }
+    stLog(`${hub.name}: ${typeMap.size.toLocaleString()} items after gap-fill`);
+    if (stGapAttempts > 0 && stGapFailures / stGapAttempts > 0.1) {
+      const failPct = Math.round((stGapFailures / stGapAttempts) * 100);
+      stLog(`⚠ GAP-FILL ${failPct}% FAILURE RATE (${stGapFailures}/${stGapAttempts}) — many items missing. Wait 60s and rescan.`);
+    }
   }
 
   // ── Step 3: Find spread opportunities ─────────────────────────────────
