@@ -238,6 +238,22 @@ tr.expanded-row td{background:var(--surface2);padding:0;border-bottom:2px solid 
 .vel-high{color:var(--green);border-color:rgba(0,255,136,0.35);background:var(--green-dim);}
 .vel-mid{color:var(--amber);border-color:rgba(255,183,0,0.35);background:var(--amber-dim);}
 .vel-low{color:var(--text-muted);border-color:var(--border);}
+/* INSTANT badge — crossed market (bid >= ask). Gold = zero-wait arbitrage. */
+.tt-badge{display:inline-block;font-family:var(--mono);font-size:9px;padding:2px 6px;border-radius:2px;
+  letter-spacing:0.06em;font-weight:600;white-space:nowrap;}
+.tt-normal{color:var(--text-muted);border:1px solid var(--border);background:var(--bg);}
+.tt-crossed{color:#0a0e14;background:var(--gold);border:1px solid var(--gold);
+  box-shadow:0 0 8px rgba(255,215,0,0.35);}
+/* Highlight entire row for crossed markets so they stand out at a glance */
+tr.row-crossed td{background:rgba(255,215,0,0.06) !important;}
+tr.row-crossed:hover td{background:rgba(255,215,0,0.10) !important;}
+/* Type filter pills in the table header */
+.st-type-filter{font-family:var(--mono);font-size:10px;padding:3px 10px;border-radius:2px;
+  border:1px solid var(--border);color:var(--text-muted);letter-spacing:0.06em;user-select:none;
+  text-transform:uppercase;transition:all 0.15s;}
+.st-type-filter:hover{color:var(--text);border-color:var(--border-bright);}
+.st-type-filter.active{color:var(--cyan);border-color:var(--cyan);background:var(--cyan-dim);}
+.st-type-filter.active.crossed-active{color:var(--gold);border-color:var(--gold);background:var(--gold-dim);}
 .depth-bar{display:inline-block;height:6px;border-radius:2px;background:var(--cyan-dim);border:1px solid var(--cyan-mid);vertical-align:middle;margin-right:4px;}
 .watchstar{cursor:pointer;font-size:13px;user-select:none;transition:transform 0.15s;}
 .watchstar:hover{transform:scale(1.3);}
@@ -567,12 +583,16 @@ tr.expanded-row td{background:var(--surface2);padding:0;border-bottom:2px solid 
     <div class="table-header">
       <div class="table-title">STATION TRADE OPPORTUNITIES <span style="color:var(--text-dim)" id="stResultCount"></span></div>
       <div class="table-filters">
+        <span class="st-type-filter" id="stTypeFilter-all"    onclick="setStTypeFilter('all')"    style="cursor:pointer">ALL <span id="stCountAll" style="color:var(--text-dim)">(0)</span></span>
+        <span class="st-type-filter" id="stTypeFilter-normal" onclick="setStTypeFilter('normal')" style="cursor:pointer">NORMAL <span id="stCountNormal" style="color:var(--text-dim)">(0)</span></span>
+        <span class="st-type-filter" id="stTypeFilter-crossed" onclick="setStTypeFilter('crossed')" style="cursor:pointer">INSTANT ⚡ <span id="stCountCrossed" style="color:var(--text-dim)">(0)</span></span>
         <button class="btn-sm" onclick="exportStationCSV()">EXPORT CSV</button>
       </div>
     </div>
     <div class="results-wrap">
       <table id="stTable">
         <thead><tr>
+          <th onclick="sortStTable('tradeType')">Type <span class="sort-arrow" id="st-sort-tradeType"></span></th>
           <th onclick="sortStTable('name')">Item <span class="sort-arrow" id="st-sort-name"></span></th>
           <th onclick="sortStTable('category')">Category <span class="sort-arrow" id="st-sort-category"></span></th>
           <th onclick="sortStTable('buyNow')">Buy Order At <span class="sort-arrow" id="st-sort-buyNow"></span></th>
@@ -588,7 +608,7 @@ tr.expanded-row td{background:var(--surface2);padding:0;border-bottom:2px solid 
           <th></th>
         </tr></thead>
         <tbody id="stBody">
-          <tr><td colspan="13"><div style="text-align:center;padding:3rem;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Select a station and click SCAN<br><br>Place a buy order at the <span style="color:var(--cyan)">Buy Order At</span> price · wait to fill · list sell at <span style="color:var(--green)">Sell Order At</span> − 0.01 ISK<br>ROI % = net profit after tax as % of your buy-in cost</div></td></tr>
+          <tr><td colspan="14"><div style="text-align:center;padding:3rem;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Select a station and click SCAN<br><br><span style="color:var(--cyan)">NORMAL</span>: buy at bid · wait · sell 0.01 ISK below ask<br><span style="color:var(--gold)">INSTANT ⚡</span>: someone is bidding MORE than others are asking — buy from the sell order, sell to the buy order, zero wait</div></td></tr>
         </tbody>
       </table>
     </div>
@@ -1928,6 +1948,9 @@ let stResults = [], stScanActive = false, stStopFlag = false;
 let stCurrentSort = 'roi', stCurrentDir = -1;
 // Station trading volume window — persists across sessions
 let currentStVolWindow = parseInt(localStorage.getItem('eve-arb-st-vol-window')) || 7;
+// Trade-type filter — 'all' | 'normal' | 'crossed'. 'crossed' shows only
+// instant arbitrage (bid >= ask at same station).
+let currentStTypeFilter = 'all';
 let stSelectedCats = new Set(['all']);
 let stScanAllResults = []; // unfiltered station scan output for live re-filtering
 
@@ -1967,6 +1990,19 @@ function stSetProgress(pct, text, sub) {
   document.getElementById('stProgressBar').style.width = Math.min(100,pct)+'%';
   document.getElementById('stProgressText').textContent = text;
   document.getElementById('stProgressPct').textContent = sub||'';
+}
+
+// Switch the trade-type filter — 'all', 'normal', or 'crossed' (INSTANT).
+// Filters the rendered rows in place without needing to rescan.
+function setStTypeFilter(type) {
+  currentStTypeFilter = type;
+  ['all', 'normal', 'crossed'].forEach(t => {
+    const el = document.getElementById('stTypeFilter-' + t);
+    if (!el) return;
+    el.classList.toggle('active', t === type);
+    el.classList.toggle('crossed-active', type === 'crossed' && t === 'crossed');
+  });
+  renderStTable();
 }
 
 function toggleStationScan() { if (!stScanActive) startStationScan(); }
@@ -2092,14 +2128,21 @@ async function startStationScan() {
   }
   stLog(`${hub.name}: ${typeMap.size.toLocaleString()} items after gap-fill`);
 
-  // ── Step 3: Find bid-ask spread opportunities ─────────────────────────
-  // lowestAsk  = lowest sell order  = what you pay to acquire now
-  // highestBid = highest buy order  = what someone will pay right now
-  // You place a buy order at highestBid, wait to fill,
-  // then list sell at lowestAsk - 0.01 to undercut.
-  // ROI = (lowestAsk - highestBid - tax) / highestBid
+  // ── Step 3: Find spread opportunities ─────────────────────────────────
+  // Two distinct opportunity types emerge from the bid/ask prices:
+  //
+  //   NORMAL spread (lowestAsk > highestBid):
+  //     Place a buy order at highestBid + 0.01 to outbid, wait to fill,
+  //     then list a sell order at lowestAsk - 0.01 to undercut.
+  //     Profit = sell price - buy price - sales tax. Requires patience.
+  //
+  //   CROSSED / INSTANT (highestBid >= lowestAsk):
+  //     Someone is willing to pay MORE than another seller is asking.
+  //     Buy from the sell order immediately, sell to the buy order
+  //     immediately. Zero wait, zero undercut risk. Only cost is sales
+  //     tax on the sell side. Rare but lucrative when they appear.
   stSetProgress(42, 'Finding spread opportunities...', '');
-  let noSell=0, noBuy=0, noBuyOrds=0, crossed=0, failROI=0;
+  let noSell=0, noBuy=0, noBuyOrds=0, failROI=0, normalOps=0, crossedOps=0;
   const candidates = [];
   typeMap.forEach((v, typeId) => {
     if (!v.sells.length) { noSell++; return; }
@@ -2107,29 +2150,65 @@ async function startStationScan() {
     if (v.buys.length < minBuyOrds) { noBuyOrds++; return; }
     const lowestAsk   = Number(v.sells[0].price);
     const highestBid  = Number(v.buys[0].price);
-    if (lowestAsk <= highestBid) { crossed++; return; }
-    const yourSell = lowestAsk - 0.01;
-    const net      = (yourSell - highestBid) - (yourSell * tax);
-    const roi      = net / highestBid;
-    if (roi < minROI || net < minProfit) { failROI++; return; }
-    // Aggregate supply across all orders, matching the Market Supply tool
+
+    // Aggregate supply across all orders at the station
     const sellVolume = v.sells.reduce((s,o) => s + Number(o.volume_remain), 0);
     const buyVolume  = v.buys.reduce((s,o) => s + Number(o.volume_remain), 0);
-    candidates.push({
+
+    // Shared candidate shell — fields filled per opportunity type below
+    const base = {
       typeId, name: null,
-      buyNow: highestBid, sellNow: lowestAsk, yourSell,
-      profitPerUnit: net, roi,
       sellOrders: v.sells.length, buyOrders: v.buys.length,
-      // Market Supply tool-style fields
       sellVolume, buyVolume,
-      dailyVol1: 0, dailyVol7: 0, dailyVol30: 0,  // filled in after history fetch
-      sellDays: null,                              // sellVolume / current-window avg
-      volume: 0,  // legacy alias — current-window avg daily vol
+      dailyVol1: 0, dailyVol7: 0, dailyVol30: 0,
+      sellDays: null,
+      volume: 0,
       score: 0
-    });
+    };
+
+    if (lowestAsk <= highestBid) {
+      // ── CROSSED MARKET — instant arbitrage ─────────────────────────
+      // You pay lowestAsk to buy, receive highestBid to sell. Tax only
+      // applies on the sale side (not on buying from an existing sell order).
+      // Max units you can flip = min(sellVolume at ask, buyVolume at bid).
+      const buyCost   = lowestAsk;
+      const saleGross = highestBid;
+      const saleTax   = saleGross * tax;
+      const net       = saleGross - buyCost - saleTax;
+      const roi       = net / buyCost;
+      // Units actually flippable — limited by the matching order sizes at the touch
+      const flipUnits = Math.min(
+        Number(v.sells[0].volume_remain),
+        Number(v.buys[0].volume_remain)
+      );
+      if (net <= 0 || roi < minROI || net < minProfit) { failROI++; return; }
+      crossedOps++;
+      candidates.push({
+        ...base,
+        tradeType: 'crossed',
+        buyNow: highestBid, sellNow: lowestAsk,
+        yourSell: lowestAsk,         // for display — you just take the bid
+        profitPerUnit: net, roi,
+        flipUnits,                   // instant-flippable quantity at the touch
+      });
+    } else {
+      // ── NORMAL SPREAD — patient station trade ──────────────────────
+      normalOps++;
+      const yourSell = lowestAsk - 0.01;
+      const net      = (yourSell - highestBid) - (yourSell * tax);
+      const roi      = net / highestBid;
+      if (roi < minROI || net < minProfit) { failROI++; return; }
+      candidates.push({
+        ...base,
+        tradeType: 'normal',
+        buyNow: highestBid, sellNow: lowestAsk, yourSell,
+        profitPerUnit: net, roi,
+        flipUnits: null,
+      });
+    }
   });
 
-  stLog(`Spread scan: ${candidates.length} candidates · ${noSell} no-sells · ${noBuy} no-buys · ${noBuyOrds} few-buys · ${crossed} crossed · ${failROI} below ROI/profit`);
+  stLog(`Spread scan: ${candidates.length} candidates (${normalOps} normal · ${crossedOps} crossed) · ${noSell} no-sells · ${noBuy} no-buys · ${noBuyOrds} few-buys · ${failROI} below ROI/profit`);
 
   if (!candidates.length) {
     stSetProgress(100, 'No candidates — check log for breakdown', '');
@@ -2223,10 +2302,25 @@ function renderStTable() {
   // Keep the column header in sync with the active vol window
   const vch = document.getElementById('st-volColHeader');
   if (vch) vch.textContent = currentStVolWindow + 'd';
-  const sorted = [...stResults].sort((a,b) => {
+
+  // Update per-type counts in the filter pills (from unfiltered results)
+  const countAll     = stResults.length;
+  const countNormal  = stResults.filter(r => r.tradeType === 'normal').length;
+  const countCrossed = stResults.filter(r => r.tradeType === 'crossed').length;
+  const ca = document.getElementById('stCountAll');      if (ca) ca.textContent = `(${countAll})`;
+  const cn = document.getElementById('stCountNormal');   if (cn) cn.textContent = `(${countNormal})`;
+  const cc = document.getElementById('stCountCrossed');  if (cc) cc.textContent = `(${countCrossed})`;
+
+  // Apply the type filter
+  const filtered = currentStTypeFilter === 'all'
+    ? stResults
+    : stResults.filter(r => r.tradeType === currentStTypeFilter);
+
+  const sorted = [...filtered].sort((a,b) => {
     const getKey = (r) => {
       if (stCurrentSort === 'name')       return r.name || '';
       if (stCurrentSort === 'category')   return catLabel(r.categoryId);
+      if (stCurrentSort === 'tradeType')  return r.tradeType === 'crossed' ? 0 : 1; // crossed first
       if (stCurrentSort === 'sellAvg')    return r.volume || 0;
       if (stCurrentSort === 'sellDays')   return r.sellDays == null ? -1 : r.sellDays;
       if (stCurrentSort === 'sellVolume') return r.sellVolume || 0;
@@ -2236,18 +2330,39 @@ function renderStTable() {
     if (typeof av==='string') return stCurrentDir * av.localeCompare(bv);
     return stCurrentDir * (bv - av);
   });
-  document.getElementById('stResultCount').textContent = `(${sorted.length})`;
+
+  // Secondary sort — crossed always bubbles to the top regardless of sort column
+  // (unless the user explicitly sorted by tradeType, which already orders them).
+  // This makes INSTANT opportunities obvious at a glance in the ALL view.
+  if (stCurrentSort !== 'tradeType' && currentStTypeFilter === 'all') {
+    sorted.sort((a, b) => {
+      if (a.tradeType === 'crossed' && b.tradeType !== 'crossed') return -1;
+      if (b.tradeType === 'crossed' && a.tradeType !== 'crossed') return 1;
+      return 0;  // stable — preserves the primary sort among equals
+    });
+  }
+
+  document.getElementById('stResultCount').textContent = `(${sorted.length}${currentStTypeFilter !== 'all' ? ' of ' + countAll : ''})`;
   const tbody = document.getElementById('stBody');
   if (!sorted.length) {
-    tbody.innerHTML = `<tr><td colspan="13"><div style="text-align:center;padding:3rem;font-family:var(--mono);font-size:11px;color:var(--text-dim);">NO OPPORTUNITIES FOUND<br>Try setting Min ROI % and Min Profit ISK to 0 and scanning again</div></td></tr>`;
+    const msg = currentStTypeFilter === 'crossed'
+      ? 'NO CROSSED MARKETS FOUND<br>These are rare — try scanning a high-traffic hub like Jita'
+      : 'NO OPPORTUNITIES FOUND<br>Try setting Min ROI % and Min Profit ISK to 0 and scanning again';
+    tbody.innerHTML = `<tr><td colspan="14"><div style="text-align:center;padding:3rem;font-family:var(--mono);font-size:11px;color:var(--text-dim);">${msg}</div></td></tr>`;
     return;
   }
   const maxSellVol = Math.max(...sorted.slice(0,50).map(r => r.sellVolume||0), 1);
   tbody.innerHTML = sorted.slice(0,500).map(r => {
-    const rCls   = r.roi > 0.15 ? 'spread-high' : r.roi > 0.08 ? 'spread-mid' : 'spread-low';
+    const rCls    = r.roi > 0.15 ? 'spread-high' : r.roi > 0.08 ? 'spread-mid' : 'spread-low';
     const volBarW = Math.max(4, Math.round((r.sellVolume||0)/maxSellVol*40));
     const sellDaysStr = r.sellDays == null ? '—' : r.sellDays.toFixed(1) + 'd';
-    return `<tr>
+    const isCrossed = r.tradeType === 'crossed';
+    const rowClass  = isCrossed ? 'row-crossed' : '';
+    const typeBadge = isCrossed
+      ? `<span class="tt-badge tt-crossed" title="Crossed market — buy from sell order, sell to buy order, zero wait. Up to ${(r.flipUnits||0).toLocaleString()} units flippable now.">INSTANT ⚡</span>`
+      : `<span class="tt-badge tt-normal">NORMAL</span>`;
+    return `<tr class="${rowClass}">
+      <td>${typeBadge}</td>
       <td><div class="item-name" title="${r.name}">${r.name}</div></td>
       <td style="color:var(--text-muted);font-size:10px">${catLabel(r.categoryId)}</td>
       <td>${fmtISK(r.buyNow)}</td>
@@ -2267,13 +2382,15 @@ function renderStTable() {
 
 function exportStationCSV() {
   if (!stResults.length) { alert('Run a scan first'); return; }
-  const headers = ['Item','Category','Type ID','Buy Now','Sell Now','ROI %','Profit/Unit ISK','Sell Volume','Sell Days','Velocity','1d Avg Vol','7d Avg Vol','30d Avg Vol','Sell Orders','Buy Orders','Score'];
+  const headers = ['Type','Item','Category','Type ID','Buy Now','Sell Now','ROI %','Profit/Unit ISK','Flip Units (crossed only)','Sell Volume','Sell Days','Velocity','1d Avg Vol','7d Avg Vol','30d Avg Vol','Sell Orders','Buy Orders','Score'];
   const rows = stResults.map(r => [
+    (r.tradeType === 'crossed' ? 'INSTANT' : 'NORMAL'),
     (r.name||'').replace(/,/g,''),
     catLabel(r.categoryId),
     r.typeId,
     r.buyNow.toFixed(2), r.sellNow.toFixed(2),
     (r.roi*100).toFixed(2), r.profitPerUnit.toFixed(2),
+    r.flipUnits != null ? r.flipUnits : '',
     r.sellVolume||0,
     r.sellDays == null ? '' : r.sellDays.toFixed(2),
     (r.sellVolume && r.volume) ? (r.volume / r.sellVolume).toFixed(3) : '',
@@ -2307,6 +2424,9 @@ openDB().then(() => {
   if (vch) vch.textContent = currentVolWindow + 'd';
   const stvch = document.getElementById('st-volColHeader');
   if (stvch) stvch.textContent = currentStVolWindow + 'd';
+  // Activate the ALL type filter pill on load
+  const allPill = document.getElementById('stTypeFilter-all');
+  if (allPill) allPill.classList.add('active');
 });
 </script>
 </body>
