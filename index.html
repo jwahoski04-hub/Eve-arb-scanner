@@ -111,6 +111,13 @@ html,body{background:var(--bg);color:var(--text);font-family:var(--ui);font-size
   color:var(--text);font-family:var(--mono);font-size:12px;padding:6px 8px;height:32px;outline:none;transition:border-color 0.2s;}
 .ctrl input:focus,.ctrl select:focus{border-color:var(--cyan);}
 .ctrl select option{background:#0f1520;}
+/* 1d/7d/30d segmented toggle — matches overall control height and style */
+.vol-toggle{display:inline-flex;border:1px solid var(--border-bright);border-radius:2px;height:32px;overflow:hidden;background:var(--bg);}
+.vol-btn{flex:1;min-width:36px;background:transparent;border:none;border-right:1px solid var(--border);color:var(--text-muted);
+  font-family:var(--mono);font-size:11px;padding:0 10px;cursor:pointer;transition:all 0.15s;user-select:none;letter-spacing:0.05em;}
+.vol-btn:last-child{border-right:none;}
+.vol-btn:hover{color:var(--text);background:var(--surface2);}
+.vol-btn.active{background:var(--cyan-dim);color:var(--cyan);}
 
 .haul-row{background:var(--surface2);border:1px solid var(--border);border-radius:3px;padding:8px 12px;margin-bottom:1.25rem;}
 .haul-header{display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none;margin-bottom:0;}
@@ -353,14 +360,14 @@ tr.expanded-row td{background:var(--surface2);padding:0;border-bottom:2px solid 
           </select>
         </div>
         <div class="ctrl"><div class="ctrl-label">Sort By</div>
-          <select id="sortBy"><option value="margin">Margin %</option><option value="profit">Profit/Unit</option><option value="tripProfit">Trip Profit</option><option value="volume">Volume</option><option value="score">Score</option></select>
+          <select id="sortBy"><option value="margin">Margin %</option><option value="profit">Profit/Unit</option><option value="tripProfit">Trip Profit</option><option value="sellVolume">Sell Volume</option><option value="sellAvg">Sell Avg</option><option value="score">Score</option></select>
         </div>
-        <div class="ctrl"><div class="ctrl-label">Vol Period</div>
-          <select id="volPeriod">
-            <option value="1">1 Day</option>
-            <option value="7" selected>7 Days</option>
-            <option value="30">30 Days</option>
-          </select>
+        <div class="ctrl"><div class="ctrl-label">Vol Window</div>
+          <div class="vol-toggle" role="group">
+            <button class="vol-btn" data-vol-window="1" onclick="setVolWindow(1)">1d</button>
+            <button class="vol-btn active" data-vol-window="7" onclick="setVolWindow(7)">7d</button>
+            <button class="vol-btn" data-vol-window="30" onclick="setVolWindow(30)">30d</button>
+          </div>
         </div>
         <div style="display:flex;flex-direction:column;gap:5px;">
           <button class="btn-scan" id="scanBtn" onclick="toggleScan()">▶ SCAN ALL</button>
@@ -459,21 +466,22 @@ tr.expanded-row td{background:var(--surface2);padding:0;border-bottom:2px solid 
       <table id="resultsTable">
         <thead><tr>
           <th style="width:28px"></th>
-          <th style="width:18%" onclick="sortTable('name')">Item <span class="sort-arrow" id="sort-name"></span></th>
+          <th style="width:17%" onclick="sortTable('name')">Item <span class="sort-arrow" id="sort-name"></span></th>
           <th style="width:7%" onclick="sortTable('category')">Category <span class="sort-arrow" id="sort-category"></span></th>
-          <th style="width:14%" onclick="sortTable('route')">Route <span class="sort-arrow" id="sort-route"></span></th>
-          <th style="width:8%" onclick="sortTable('buyPrice')">Buy Price <span class="sort-arrow" id="sort-buyPrice"></span></th>
-          <th style="width:8%" onclick="sortTable('sellPrice')">Sell Price <span class="sort-arrow" id="sort-sellPrice"></span></th>
-          <th style="width:7%" onclick="sortTable('margin')" class="sorted">Margin % <span class="sort-arrow" id="sort-margin">▼</span></th>
-          <th style="width:9%" onclick="sortTable('profit')">Profit/Unit <span class="sort-arrow" id="sort-profit"></span></th>
-          <th style="width:10%" onclick="sortTable('depth')"><span class="th-depth-wrap">Depth <span class="sort-arrow" id="sort-depth"></span><span class="depth-info">i</span><div class="depth-tip"><div class="depth-tip-title">Order Depth</div><div class="depth-tip-body">Total units available at the buy hub's main station across all sell orders. This is how many units you can actually buy at the listed price. Compare against your cargo capacity to estimate how many trips are needed to clear the opportunity.</div></div></span></th>
-          <th style="width:9%" onclick="sortTable('tripProfit')">Trip Profit <span class="sort-arrow" id="sort-tripProfit"></span></th>
-          <th style="width:8%" onclick="sortTable('volume')"><span id="volColHeader">7d</span> Avg Vol <span class="sort-arrow" id="sort-volume"></span></th>
-          <th style="width:7%" onclick="sortTable('score')"><span class="th-score-wrap">Score <span class="sort-arrow" id="sort-score"></span><span class="score-info">i</span><div class="score-tip"><div class="score-tip-title">Opportunity Score</div><div class="score-tip-formula">log₁₀(avg vol) × margin% × 100</div><div class="score-tip-body">Combines liquidity and profitability into one number. High score = high volume AND high margin. Use this to rank the best all-around hauls.</div></div></span></th>
+          <th style="width:12%" onclick="sortTable('route')">Route <span class="sort-arrow" id="sort-route"></span></th>
+          <th style="width:7%" onclick="sortTable('buyPrice')">Sell Price <span class="sort-arrow" id="sort-buyPrice"></span></th>
+          <th style="width:8%" onclick="sortTable('sellVolume')"><span class="th-depth-wrap">Sell Volume <span class="sort-arrow" id="sort-sellVolume"></span><span class="depth-info">i</span><div class="depth-tip"><div class="depth-tip-title">Sell Volume</div><div class="depth-tip-body">Total units for sale at the origin hub's main station across all sell orders. This is how many units you can actually buy at the listed price. Compare against your cargo capacity to estimate how many trips are needed to clear the opportunity.</div></div></span></th>
+          <th style="width:6%" onclick="sortTable('sellDays')"><span class="th-depth-wrap">Sell Days <span class="sort-arrow" id="sort-sellDays"></span><span class="depth-info">i</span><div class="depth-tip"><div class="depth-tip-title">Sell Days</div><div class="depth-tip-body">Days of supply at the origin station at the current average daily sell rate. Sell Volume ÷ Sell Avg. Lower = more competitive market; higher = slower turnover.</div></div></span></th>
+          <th style="width:7%" onclick="sortTable('sellAvg')"><span id="volColHeader">7d</span> Sell Avg <span class="sort-arrow" id="sort-sellAvg"></span></th>
+          <th style="width:7%" onclick="sortTable('sellPrice')">Dest Price <span class="sort-arrow" id="sort-sellPrice"></span></th>
+          <th style="width:6%" onclick="sortTable('margin')" class="sorted">Margin % <span class="sort-arrow" id="sort-margin">▼</span></th>
+          <th style="width:8%" onclick="sortTable('profit')">Profit/Unit <span class="sort-arrow" id="sort-profit"></span></th>
+          <th style="width:8%" onclick="sortTable('tripProfit')">Trip Profit <span class="sort-arrow" id="sort-tripProfit"></span></th>
+          <th style="width:6%" onclick="sortTable('score')"><span class="th-score-wrap">Score <span class="sort-arrow" id="sort-score"></span><span class="score-info">i</span><div class="score-tip"><div class="score-tip-title">Opportunity Score</div><div class="score-tip-formula">log₁₀(sell avg) × margin% × 100</div><div class="score-tip-body">Combines liquidity and profitability into one number. High score = high volume AND high margin. Use this to rank the best all-around hauls.</div></div></span></th>
           <th style="width:4%"></th>
         </tr></thead>
         <tbody id="resultsBody">
-          <tr><td colspan="13"><div style="text-align:center;padding:3rem;font-family:var(--mono);font-size:11px;color:var(--text-dim);">v1.2.0: Bulk region fetch — all orders pulled in one pass per hub<br>Click SCAN ALL to begin</div></td></tr>
+          <tr><td colspan="14"><div style="text-align:center;padding:3rem;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Bulk region fetch — all orders pulled in one pass per hub<br>Results include Sell Volume, Sell Days, and 1d/7d/30d volume windows<br>Click SCAN ALL to begin</div></td></tr>
         </tbody>
       </table>
     </div>
@@ -493,12 +501,12 @@ tr.expanded-row td{background:var(--surface2);padding:0;border-bottom:2px solid 
             <option value="5">≥ 5</option>
           </select>
         </div>
-        <div class="ctrl"><div class="ctrl-label">Vol Period</div>
-          <select id="st-volPeriod">
-            <option value="1">1 Day</option>
-            <option value="7" selected>7 Days</option>
-            <option value="30">30 Days</option>
-          </select>
+        <div class="ctrl"><div class="ctrl-label">Vol Window</div>
+          <div class="vol-toggle" role="group">
+            <button class="vol-btn" data-st-vol-window="1" onclick="stSetVolWindow(1)">1d</button>
+            <button class="vol-btn active" data-st-vol-window="7" onclick="stSetVolWindow(7)">7d</button>
+            <button class="vol-btn" data-st-vol-window="30" onclick="stSetVolWindow(30)">30d</button>
+          </div>
         </div>
         <div style="display:flex;flex-direction:column;gap:5px;">
           <button class="btn-scan" id="stScanBtn" onclick="toggleStationScan()">▶ SCAN</button>
@@ -564,14 +572,16 @@ tr.expanded-row td{background:var(--surface2);padding:0;border-bottom:2px solid 
           <th onclick="sortStTable('sellNow')">Sell Order At <span class="sort-arrow" id="st-sort-sellNow"></span></th>
           <th onclick="sortStTable('roi')" class="sorted">ROI % <span class="sort-arrow" id="st-sort-roi">▼</span></th>
           <th onclick="sortStTable('profitPerUnit')">Profit/Unit <span class="sort-arrow" id="st-sort-profitPerUnit"></span></th>
+          <th onclick="sortStTable('sellVolume')">Sell Volume <span class="sort-arrow" id="st-sort-sellVolume"></span></th>
+          <th onclick="sortStTable('sellDays')">Sell Days <span class="sort-arrow" id="st-sort-sellDays"></span></th>
+          <th onclick="sortStTable('sellAvg')"><span id="st-volColHeader">7d</span> Sell Avg <span class="sort-arrow" id="st-sort-sellAvg"></span></th>
           <th onclick="sortStTable('sellOrders')">Sell Orders <span class="sort-arrow" id="st-sort-sellOrders"></span></th>
           <th onclick="sortStTable('buyOrders')">Buy Orders <span class="sort-arrow" id="st-sort-buyOrders"></span></th>
-          <th onclick="sortStTable('volume')">Avg Vol <span class="sort-arrow" id="st-sort-volume"></span></th>
           <th onclick="sortStTable('score')">Score <span class="sort-arrow" id="st-sort-score"></span></th>
           <th></th>
         </tr></thead>
         <tbody id="stBody">
-          <tr><td colspan="11"><div style="text-align:center;padding:3rem;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Select a station and click SCAN<br><br>Place a buy order at the <span style="color:var(--cyan)">Buy Order At</span> price · wait to fill · list sell at <span style="color:var(--green)">Sell Order At</span> − 0.01 ISK<br>ROI % = net profit after tax as % of your buy-in cost</div></td></tr>
+          <tr><td colspan="13"><div style="text-align:center;padding:3rem;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Select a station and click SCAN<br><br>Place a buy order at the <span style="color:var(--cyan)">Buy Order At</span> price · wait to fill · list sell at <span style="color:var(--green)">Sell Order At</span> − 0.01 ISK<br>ROI % = net profit after tax as % of your buy-in cost</div></td></tr>
         </tbody>
       </table>
     </div>
@@ -961,15 +971,36 @@ async function fetchRegionOrders(regionId) {
 
 // ============================================================
 // MARKET HISTORY (per-typeId, cached aggressively)
-// days = 1, 7, or 30 — always from the SELL (destination) hub
 // ============================================================
-async function getHistory(regionId, typeId, days) {
+// HISTORY — returns {v1, v7, v30} daily-volume averages (matches
+// Market Supply tool). ONE fetch per (regionId, typeId) gives us
+// all three windows so the 1d/7d/30d toggle works without rescanning.
+// ============================================================
+function computeVolumeWindows(history) {
+  if (!history || !history.length) return { v1: 0, v7: 0, v30: 0 };
+  const avg = (arr) => arr.length ? Math.round(arr.reduce((s,d) => s + d.volume, 0) / arr.length) : 0;
+  return {
+    v1:  avg(history.slice(-1)),
+    v7:  avg(history.slice(-7)),
+    v30: avg(history.slice(-30)),
+  };
+}
+
+async function getHistoryAllWindows(regionId, typeId) {
   try {
     const hist = await esiFetch(`https://esi.evetech.net/latest/markets/${regionId}/history/?type_id=${typeId}`);
-    if (!Array.isArray(hist) || !hist.length) return 0;
-    const recent = hist.slice(-days);
-    return Math.round(recent.reduce((s,h) => s + h.volume, 0) / recent.length);
-  } catch(e) { return 0; }
+    if (!Array.isArray(hist) || !hist.length) return { v1:0, v7:0, v30:0 };
+    return computeVolumeWindows(hist);
+  } catch(e) { return { v1:0, v7:0, v30:0 }; }
+}
+
+// Back-compat shim — some old code paths still call getHistory(regionId, typeId, days).
+// It now delegates to the multi-window fetch and returns the requested window.
+async function getHistory(regionId, typeId, days) {
+  const v = await getHistoryAllWindows(regionId, typeId);
+  if (days === 1)  return v.v1;
+  if (days === 30) return v.v30;
+  return v.v7;
 }
 
 // ============================================================
@@ -1049,11 +1080,46 @@ async function batchResolveNames(typeIds) {
 // ============================================================
 let allResults = [], filteredResults = [], prevResultKeys = new Set(), newOppKeys = new Set();
 let scanAllResults = []; // unfiltered scan output — used for live category re-filtering
+// Volume window for Hub Trading — 1, 7, or 30 day average daily volume.
+// Switches which dailyVol{1,7,30} field is used for display, filtering, and scoring.
+// Persists across sessions via localStorage.
+let currentVolWindow = parseInt(localStorage.getItem('eve-arb-vol-window')) || 7;
 let watchlist = JSON.parse(localStorage.getItem('eve-arb-wl') || '[]');
 let scanActive = false, stopFlag = false;
 let currentSort = 'margin', currentDir = -1;
 let showNewOnly = false, scanStartTime = 0, expandedRow = null;
 let selectedCats = new Set(['all']);
+
+// ============================================================
+// VOLUME WINDOW HELPERS
+// ============================================================
+// Returns the daily volume for an opportunity in the given window (1, 7, or 30 days).
+function getVolForWindow(o, win) {
+  if (win === 1)  return o.dailyVol1  || 0;
+  if (win === 30) return o.dailyVol30 || 0;
+  return o.dailyVol7 || 0;
+}
+
+// Switch which window (1d/7d/30d) drives display, filtering, and score.
+// Recomputes volume, sellDays, and score across all results, then re-renders.
+function setVolWindow(win) {
+  currentVolWindow = win;
+  try { localStorage.setItem('eve-arb-vol-window', String(win)); } catch {}
+  // Update button active states
+  document.querySelectorAll('[data-vol-window]').forEach(b => {
+    b.classList.toggle('active', parseInt(b.dataset.volWindow) === win);
+  });
+  // Recompute derived values on every opportunity in memory
+  const allOpps = [...scanAllResults, ...allResults];
+  allOpps.forEach(o => {
+    const vol = getVolForWindow(o, win);
+    o.volume   = vol;
+    o.sellDays = (vol > 0 && o.sellVolume != null) ? (o.sellVolume / vol) : null;
+    o.score    = Math.log10(Math.max(1, vol)) * (o.margin || 0) * 100;
+  });
+  updateBestMetrics();
+  applyFilter();
+}
 
 // ============================================================
 // CATEGORY / HUB CONTROLS
@@ -1286,12 +1352,8 @@ async function startScan() {
   const minVol      = parseInt(document.getElementById('minVol').value) || 0;
   const minProfit   = parseFloat(document.getElementById('minProfit').value) || 0;
   const cargo       = parseFloat(document.getElementById('cargoM3').value) || 10000;
-  const volDays     = parseInt(document.getElementById('volPeriod').value) || 7;
   const minSellOrds = parseInt(document.getElementById('minSellOrders').value) || 1;
   const maxPriceMult = parseFloat(document.getElementById('maxPriceMult').value) || 0;
-
-  // Update column header to reflect selected period
-  document.getElementById('volColHeader').textContent = volDays + 'd';
 
   // ── STEP 1: Fetch ALL orders for each region in bulk — ALL HUBS IN PARALLEL ──
   log('BULK FETCHING ALL REGION ORDERS IN PARALLEL...');
@@ -1415,9 +1477,16 @@ async function startScan() {
         if (isNew) newOppKeys.add(key);
         opportunities.push({ typeId, name: null, buyHubId, sellHubId,
           buyHubName: HUBS[buyHubId].name, sellHubName: HUBS[sellHubId].name,
-          buyPrice, sellPrice, profit: net, margin, volume: 0,
-          depth: bEntry.depth,
-          sellOrderCount: sEntry.sells.length,  // number of competing sell orders at destination
+          buyPrice, sellPrice, profit: net, margin,
+          // Market Supply tool-style fields (origin hub — the one you buy at)
+          sellVolume: bEntry.depth,                // total units for sale at origin station (was "depth")
+          sellOrderCountOrigin: bEntry.sells.length, // competing sell orders at origin
+          sellOrderCount: sEntry.sells.length,       // competing sell orders at destination (legacy name)
+          dailyVol1: 0, dailyVol7: 0, dailyVol30: 0, // filled in after history fetch
+          sellDays: null,                            // computed = sellVolume / currentDailyVol
+          // Back-compat aliases
+          depth: bEntry.depth,                       // same as sellVolume — kept for existing code
+          volume: 0,                                 // currently-selected window's daily vol
           score: 0, packagedVol: SDE_VOL_CACHE[typeId] || 1,
           tripProfit: 0, tripUnits: 0, iskPerM3: 0, isNew });
       }
@@ -1432,11 +1501,14 @@ async function startScan() {
   if (stopFlag) { allResults = opportunities; finishScan(); return; }
 
   // ── STEP 3: Fetch history (20 concurrent workers) ─────────────────────
+  // One request per unique typeId returns the full daily history, from which
+  // we compute 1d / 7d / 30d averages — so the volume window toggle can
+  // switch between them without needing a new scan.
   log(`FETCHING HISTORY FOR ${opportunities.length} CANDIDATES...`);
-  setProgress(60, `Fetching 7d volume for ${opportunities.length} opportunities...`, '');
+  setProgress(60, `Fetching 1d/7d/30d volumes for ${opportunities.length} opportunities...`, '');
 
   const uniqueTypeIds = [...new Set(opportunities.map(o => o.typeId))];
-  const histMap = {}; // typeId(number) → avg daily volume
+  const histMap = {}; // typeId(number) → {v1, v7, v30}
   const avgMap  = {}; // typeId(number) → recent avg price (for outlier filter)
   let histFetched = 0;
 
@@ -1449,9 +1521,8 @@ async function startScan() {
         `https://esi.evetech.net/latest/markets/${opp.sellHubId}/history/?type_id=${typeId}`
       );
       if (Array.isArray(hist) && hist.length) {
-        const recent = hist.slice(-volDays);
-        histMap[typeId] = Math.round(recent.reduce((s,h) => s + Number(h.volume), 0) / recent.length);
-        // Also compute avg price for outlier filter — no extra request needed
+        histMap[typeId] = computeVolumeWindows(hist);
+        // Recent average price for outlier filter — reuses the same history payload
         const last7 = hist.slice(-7);
         avgMap[typeId] = last7.reduce((s,h) => s + Number(h.average), 0) / last7.length;
       }
@@ -1471,10 +1542,18 @@ async function startScan() {
   await Promise.all(Array.from({length: 20}, histWorker));
 
   // Apply history + outlier filter
+  // Filtering uses the CURRENTLY SELECTED volume window (currentVolWindow).
+  // Items below the threshold in the chosen window are dropped.
   let outlierStripped = 0;
   const filtered = opportunities.filter(o => {
-    const vol = histMap[o.typeId] || 0;
-    o.volume = vol;
+    const windows = histMap[o.typeId] || { v1:0, v7:0, v30:0 };
+    o.dailyVol1  = windows.v1;
+    o.dailyVol7  = windows.v7;
+    o.dailyVol30 = windows.v30;
+    const vol = getVolForWindow(o, currentVolWindow);
+    o.volume = vol; // legacy alias — used by Score
+    // Sell Days — how many days of supply the origin station's stock represents
+    o.sellDays = (vol > 0 && o.sellVolume != null) ? (o.sellVolume / vol) : null;
     if (vol < minVol) return false;
     // Outlier filter: skip if either price exceeds maxPriceMult × recent avg
     if (maxPriceMult > 0) {
@@ -1548,7 +1627,8 @@ function updateTripProfits(cargo) {
   cargo = cargo || parseFloat(document.getElementById('cargoM3').value) || 10000;
   allResults.forEach(r => {
     const itemVol = r.packagedVol || 1;
-    const units   = Math.min(Math.floor(cargo / itemVol), r.depth || 0);
+    // Cap at available sell volume (the "depth" at the origin station)
+    const units   = Math.min(Math.floor(cargo / itemVol), r.sellVolume || r.depth || 0);
     r.tripProfit  = units * r.profit;
     r.tripUnits   = units;
     r.iskPerM3    = r.profit / itemVol;
@@ -1598,19 +1678,32 @@ function sortTable(key) {
 
 function renderTable() {
   const display = filteredResults.length ? filteredResults : (showNewOnly ? [] : allResults);
+  // Keep the column header in sync with the active volume window
+  const vch = document.getElementById('volColHeader');
+  if (vch) vch.textContent = currentVolWindow + 'd';
   const sorted  = [...display].sort((a,b) => {
-    const av = currentSort==='name'?(a.name||''):currentSort==='route'?a.buyHubName:currentSort==='category'?catLabel(a.categoryId):(a[currentSort]||0);
-    const bv = currentSort==='name'?(b.name||''):currentSort==='route'?b.buyHubName:currentSort==='category'?catLabel(b.categoryId):(b[currentSort]||0);
+    // Sort key aliasing: some columns use derived/renamed fields
+    const getKey = (r) => {
+      if (currentSort === 'name')     return r.name || '';
+      if (currentSort === 'route')    return r.buyHubName;
+      if (currentSort === 'category') return catLabel(r.categoryId);
+      if (currentSort === 'sellAvg')  return r.volume || 0;  // current-window daily vol
+      if (currentSort === 'sellDays') return r.sellDays == null ? -1 : r.sellDays;
+      if (currentSort === 'sellVolume') return r.sellVolume || 0;
+      if (currentSort === 'buyPrice') return r.buyPrice || 0;
+      return r[currentSort] || 0;
+    };
+    const av = getKey(a), bv = getKey(b);
     if (typeof av==='string') return currentDir*av.localeCompare(bv);
     return currentDir*(bv-av);
   });
   document.getElementById('resultCount').textContent = `(${sorted.length})`;
   const tbody    = document.getElementById('resultsBody');
   if (!sorted.length) {
-    tbody.innerHTML = `<tr><td colspan="13"><div style="text-align:center;padding:3rem;font-family:var(--mono);font-size:11px;color:var(--text-dim);">NO OPPORTUNITIES FOUND<br>Try lowering thresholds or running a scan</div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="14"><div style="text-align:center;padding:3rem;font-family:var(--mono);font-size:11px;color:var(--text-dim);">NO OPPORTUNITIES FOUND<br>Try lowering thresholds or running a scan</div></td></tr>`;
     return;
   }
-  const maxDepth = Math.max(...sorted.slice(0,50).map(r=>r.depth||0), 1);
+  const maxSellVol = Math.max(...sorted.slice(0,50).map(r=>r.sellVolume||0), 1);
   tbody.innerHTML = sorted.slice(0,500).map((r,i) => {
     const key       = oppKey(r);
     const mPct      = (r.margin*100).toFixed(1);
@@ -1619,21 +1712,23 @@ function renderTable() {
     const sCls      = HUBS[r.sellHubId]?.cls||'';
     const name      = r.name||`#${r.typeId}`;
     const isWatched = watchlist.some(w=>w.typeId===r.typeId);
-    const depthW    = Math.max(4, Math.round((r.depth||0)/maxDepth*40));
+    const volBarW   = Math.max(4, Math.round((r.sellVolume||0)/maxSellVol*40));
     const newFlag   = r.isNew ? '🟢' : '';
     const rowCls    = r.isNew ? 'new-opp' : i<3 ? 'top-row' : '';
+    const sellDaysStr = r.sellDays == null ? '—' : r.sellDays.toFixed(1) + 'd';
     return `<tr class="${rowCls}" data-key="${key}" onclick="toggleExpand('${key}',${r.typeId})">
       <td><span class="watchstar" onclick="event.stopPropagation();toggleWatch(${JSON.stringify(r).replace(/"/g,'&quot;')})">${isWatched?'★':'☆'}</span></td>
       <td><div class="item-name" title="${name}">${newFlag}${name}</div></td>
       <td style="color:var(--text-muted);font-size:10px">${catLabel(r.categoryId)}</td>
       <td><span class="hub-pill ${bCls}">${r.buyHubName}</span><span class="arrow">→</span><span class="hub-pill ${sCls}">${r.sellHubName}</span></td>
       <td>${fmtISK(r.buyPrice)}</td>
+      <td><div class="depth-bar" style="width:${volBarW}px"></div>${fmtVol(r.sellVolume)}</td>
+      <td style="color:var(--text-muted)">${sellDaysStr}</td>
+      <td>${fmtVol(r.volume)}${r.volume ? '/d' : ''}</td>
       <td>${fmtISK(r.sellPrice)}</td>
       <td class="${mCls}">${mPct}%</td>
       <td class="profit-val">${fmtISK(r.profit)}</td>
-      <td><div class="depth-bar" style="width:${depthW}px"></div>${fmtVol(r.depth)}</td>
       <td style="color:var(--gold)">${fmtISK(r.tripProfit)}</td>
-      <td>${fmtVol(r.volume)}</td>
       <td style="color:var(--text-muted)">${r.score.toFixed(0)}</td>
       <td><span class="copy-btn" onclick="event.stopPropagation();copyName(this,'${name.replace(/'/g,"\\'")}')">COPY</span></td>
     </tr>`;
@@ -1652,10 +1747,11 @@ function toggleExpand(key) {
   const cargo    = parseFloat(document.getElementById('cargoM3').value)||10000;
   const itemVol  = r.packagedVol||1;
   const maxUnits = Math.floor(cargo/itemVol);
-  const units    = Math.min(maxUnits, r.depth||0);
+  const units    = Math.min(maxUnits, r.sellVolume||0);
+  const sellDaysStr = r.sellDays == null ? '—' : r.sellDays.toFixed(1) + ' days';
   const detail   = document.createElement('tr');
   detail.className = 'expanded-row';
-  detail.innerHTML = `<td colspan="13"><div class="detail-panel">
+  detail.innerHTML = `<td colspan="14"><div class="detail-panel">
     <div class="detail-section">
       <div class="detail-title">Price Breakdown <span style="color:var(--amber);font-size:8px;letter-spacing:0">· NPC STATION</span></div>
       <div class="detail-row"><span class="detail-key">Buy @ ${r.buyHubName}</span><span class="detail-val">${fmtISK(r.buyPrice)} ISK</span></div>
@@ -1665,17 +1761,21 @@ function toggleExpand(key) {
       <div class="detail-row"><span class="detail-key">Net profit/unit</span><span class="detail-val green">${fmtISK(r.profit)} ISK</span></div>
     </div>
     <div class="detail-section">
-      <div class="detail-title">Order Depth &amp; Volume</div>
-      <div class="detail-row"><span class="detail-key">Units at station</span><span class="detail-val">${(r.depth||0).toLocaleString()}</span></div>
-      <div class="detail-row"><span class="detail-key">Sell orders at dest</span><span class="detail-val">${r.sellOrderCount||'—'}</span></div>
+      <div class="detail-title">Supply &amp; Volume</div>
+      <div class="detail-row"><span class="detail-key">Sell Volume (origin)</span><span class="detail-val">${(r.sellVolume||0).toLocaleString()}</span></div>
+      <div class="detail-row"><span class="detail-key">Sell orders @ origin</span><span class="detail-val">${r.sellOrderCountOrigin||'—'}</span></div>
+      <div class="detail-row"><span class="detail-key">Sell orders @ dest</span><span class="detail-val">${r.sellOrderCount||'—'}</span></div>
       <div class="detail-row"><span class="detail-key">Packaged vol</span><span class="detail-val">${itemVol.toFixed(2)} m³/unit</span></div>
-      <div class="detail-row"><span class="detail-key">${document.getElementById('volPeriod').value}d avg daily vol</span><span class="detail-val">${fmtVol(r.volume)}</span></div>
+      <div class="detail-row"><span class="detail-key">1d avg daily vol</span><span class="detail-val ${currentVolWindow===1?'green':''}">${fmtVol(r.dailyVol1)}/d</span></div>
+      <div class="detail-row"><span class="detail-key">7d avg daily vol</span><span class="detail-val ${currentVolWindow===7?'green':''}">${fmtVol(r.dailyVol7)}/d</span></div>
+      <div class="detail-row"><span class="detail-key">30d avg daily vol</span><span class="detail-val ${currentVolWindow===30?'green':''}">${fmtVol(r.dailyVol30)}/d</span></div>
+      <div class="detail-row"><span class="detail-key">Sell Days (${currentVolWindow}d)</span><span class="detail-val">${sellDaysStr}</span></div>
       <div class="detail-row"><span class="detail-key">Score</span><span class="detail-val">${r.score.toFixed(1)}</span></div>
     </div>
     <div class="detail-section">
       <div class="detail-title">Hauling Calc (${cargo.toLocaleString()} m³)</div>
       <div class="detail-row"><span class="detail-key">Units fit in cargo</span><span class="detail-val">${maxUnits.toLocaleString()}</span></div>
-      <div class="detail-row"><span class="detail-key">Units available</span><span class="detail-val">${(r.depth||0).toLocaleString()}</span></div>
+      <div class="detail-row"><span class="detail-key">Units available</span><span class="detail-val">${(r.sellVolume||0).toLocaleString()}</span></div>
       <div class="detail-row"><span class="detail-key">Units to haul</span><span class="detail-val">${units.toLocaleString()}</span></div>
       <div class="detail-row"><span class="detail-key">Trip profit</span><span class="detail-val gold">${fmtISK(r.tripProfit)} ISK</span></div>
       <div class="detail-row"><span class="detail-key">ISK per m³</span><span class="detail-val green">${fmtISK(r.iskPerM3)}</span></div>
@@ -1777,16 +1877,22 @@ async function clearCache() {
 // ============================================================
 function exportCSV() {
   if (!allResults.length) { alert('Run a scan first'); return; }
-  const headers = ['Item','Type ID','Buy Hub','Sell Hub','Buy Price','Sell Price','Margin %','Profit/Unit ISK','Depth','Trip Profit ISK','ISK/m3','7d Avg Vol','Score'];
+  const headers = ['Item','Category','Type ID','Buy Hub','Sell Hub','Sell Price (origin)','Dest Price','Margin %','Profit/Unit ISK','Sell Volume','Sell Days','1d Avg Vol','7d Avg Vol','30d Avg Vol','Trip Profit ISK','ISK/m3','Score'];
   const rows    = allResults.map(r => [
-    (r.name||'').replace(/,/g,''), r.typeId, r.buyHubName, r.sellHubName,
+    (r.name||'').replace(/,/g,''),
+    catLabel(r.categoryId),
+    r.typeId, r.buyHubName, r.sellHubName,
     r.buyPrice.toFixed(2), r.sellPrice.toFixed(2), (r.margin*100).toFixed(2),
-    r.profit.toFixed(2), r.depth||0, r.tripProfit.toFixed(0), r.iskPerM3.toFixed(0), r.volume, r.score.toFixed(1)
+    r.profit.toFixed(2),
+    r.sellVolume||0,
+    r.sellDays == null ? '' : r.sellDays.toFixed(2),
+    r.dailyVol1||0, r.dailyVol7||0, r.dailyVol30||0,
+    r.tripProfit.toFixed(0), r.iskPerM3.toFixed(0), r.score.toFixed(1)
   ].join(','));
   const csv = [headers.join(','), ...rows].join('\n');
   const a   = document.createElement('a');
   a.href    = URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
-  a.download = `eve_arb_v120_${new Date().toISOString().slice(0,10)}.csv`;
+  a.download = `eve_arb_scanner_${new Date().toISOString().slice(0,10)}.csv`;
   a.click();
 }
 
@@ -1795,6 +1901,8 @@ function exportCSV() {
 // ============================================================
 let stResults = [], stScanActive = false, stStopFlag = false;
 let stCurrentSort = 'roi', stCurrentDir = -1;
+// Station trading volume window — persists across sessions
+let currentStVolWindow = parseInt(localStorage.getItem('eve-arb-st-vol-window')) || 7;
 let stSelectedCats = new Set(['all']);
 let stScanAllResults = []; // unfiltered station scan output for live re-filtering
 
@@ -1837,6 +1945,26 @@ function stSetProgress(pct, text, sub) {
 }
 
 function toggleStationScan() { if (!stScanActive) startStationScan(); }
+
+// Switch station trading vol window (1d/7d/30d) — recomputes vol, sellDays, score
+// across station results without needing to rescan.
+function stSetVolWindow(win) {
+  currentStVolWindow = win;
+  try { localStorage.setItem('eve-arb-st-vol-window', String(win)); } catch {}
+  document.querySelectorAll('[data-st-vol-window]').forEach(b => {
+    b.classList.toggle('active', parseInt(b.dataset.stVolWindow) === win);
+  });
+  const allSt = [...stScanAllResults, ...stResults];
+  allSt.forEach(c => {
+    const vol = (win === 1) ? (c.dailyVol1 || 0) :
+                (win === 30) ? (c.dailyVol30 || 0) : (c.dailyVol7 || 0);
+    c.volume   = vol;
+    c.sellDays = (vol > 0 && c.sellVolume != null) ? (c.sellVolume / vol) : null;
+    c.score    = Math.log10(Math.max(1, vol)) * (c.roi || 0) * 100;
+  });
+  renderStTable();
+}
+
 function stopStationScan() {
   stStopFlag = true;
   stLog('SCAN ABORTED');
@@ -1855,7 +1983,6 @@ async function startStationScan() {
   const minVol      = parseInt(document.getElementById('st-minVol').value)||0;
   const minProfit   = parseFloat(document.getElementById('st-minProfit').value)||0;
   const minBuyOrds  = parseInt(document.getElementById('st-minBuyOrders').value)||1;
-  const volDays     = parseInt(document.getElementById('st-volPeriod').value)||7;
 
   stScanActive = true; stStopFlag = false; stResults = []; stScanAllResults = [];
   document.getElementById('stScanBtn').classList.add('running');
@@ -1960,12 +2087,20 @@ async function startStationScan() {
     const net      = (yourSell - highestBid) - (yourSell * tax);
     const roi      = net / highestBid;
     if (roi < minROI || net < minProfit) { failROI++; return; }
+    // Aggregate supply across all orders, matching the Market Supply tool
+    const sellVolume = v.sells.reduce((s,o) => s + Number(o.volume_remain), 0);
+    const buyVolume  = v.buys.reduce((s,o) => s + Number(o.volume_remain), 0);
     candidates.push({
       typeId, name: null,
       buyNow: highestBid, sellNow: lowestAsk, yourSell,
       profitPerUnit: net, roi,
       sellOrders: v.sells.length, buyOrders: v.buys.length,
-      volume: 0, score: 0
+      // Market Supply tool-style fields
+      sellVolume, buyVolume,
+      dailyVol1: 0, dailyVol7: 0, dailyVol30: 0,  // filled in after history fetch
+      sellDays: null,                              // sellVolume / current-window avg
+      volume: 0,  // legacy alias — current-window avg daily vol
+      score: 0
     });
   });
 
@@ -1979,8 +2114,10 @@ async function startStationScan() {
   }
   if (stStopFlag) { stFinish(); return; }
 
-  // ── Step 4: History (20 workers) ──────────────────────────────────────
-  stLog(`Fetching history for ${candidates.length} candidates...`);
+  // ── Step 4: History (20 workers) — capture all three volume windows ──
+  // One fetch per typeId returns full history; we compute v1/v7/v30 from it
+  // so the 1d/7d/30d toggle can switch between them without rescanning.
+  stLog(`Fetching history for ${candidates.length} candidates (all windows)...`);
   const uniqueIds = [...new Set(candidates.map(c => c.typeId))];
   let fetched = 0;
   const tasks = uniqueIds.map(typeId => async () => {
@@ -1990,9 +2127,17 @@ async function startStationScan() {
         `https://esi.evetech.net/latest/markets/${hubId}/history/?type_id=${typeId}`
       );
       if (Array.isArray(hist) && hist.length) {
-        const recent = hist.slice(-volDays);
-        const vol = Math.round(recent.reduce((s,h) => s+Number(h.volume), 0) / recent.length);
-        candidates.filter(c => c.typeId===typeId).forEach(c => c.volume=vol);
+        const win = computeVolumeWindows(hist);
+        candidates.filter(c => c.typeId===typeId).forEach(c => {
+          c.dailyVol1  = win.v1;
+          c.dailyVol7  = win.v7;
+          c.dailyVol30 = win.v30;
+          // Set current-window volume and sellDays
+          const vol = (currentStVolWindow === 1) ? win.v1 :
+                      (currentStVolWindow === 30) ? win.v30 : win.v7;
+          c.volume = vol;
+          c.sellDays = (vol > 0 && c.sellVolume != null) ? (c.sellVolume / vol) : null;
+        });
       }
     } catch(e) {}
     fetched++;
@@ -2050,22 +2195,33 @@ function sortStTable(key) {
 }
 
 function renderStTable() {
+  // Keep the column header in sync with the active vol window
+  const vch = document.getElementById('st-volColHeader');
+  if (vch) vch.textContent = currentStVolWindow + 'd';
   const sorted = [...stResults].sort((a,b) => {
-    const av = stCurrentSort==='name' ? (a.name||'') : stCurrentSort==='category' ? catLabel(a.categoryId) : (a[stCurrentSort]||0);
-    const bv = stCurrentSort==='name' ? (b.name||'') : stCurrentSort==='category' ? catLabel(b.categoryId) : (b[stCurrentSort]||0);
+    const getKey = (r) => {
+      if (stCurrentSort === 'name')       return r.name || '';
+      if (stCurrentSort === 'category')   return catLabel(r.categoryId);
+      if (stCurrentSort === 'sellAvg')    return r.volume || 0;
+      if (stCurrentSort === 'sellDays')   return r.sellDays == null ? -1 : r.sellDays;
+      if (stCurrentSort === 'sellVolume') return r.sellVolume || 0;
+      return r[stCurrentSort] || 0;
+    };
+    const av = getKey(a), bv = getKey(b);
     if (typeof av==='string') return stCurrentDir * av.localeCompare(bv);
     return stCurrentDir * (bv - av);
   });
   document.getElementById('stResultCount').textContent = `(${sorted.length})`;
   const tbody = document.getElementById('stBody');
   if (!sorted.length) {
-    tbody.innerHTML = `<tr><td colspan="11"><div style="text-align:center;padding:3rem;font-family:var(--mono);font-size:11px;color:var(--text-dim);">NO OPPORTUNITIES FOUND<br>Try setting Min ROI % and Min Profit ISK to 0 and scanning again</div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="13"><div style="text-align:center;padding:3rem;font-family:var(--mono);font-size:11px;color:var(--text-dim);">NO OPPORTUNITIES FOUND<br>Try setting Min ROI % and Min Profit ISK to 0 and scanning again</div></td></tr>`;
     return;
   }
-  const maxSell = Math.max(...sorted.slice(0,50).map(r => r.sellOrders||0), 1);
+  const maxSellVol = Math.max(...sorted.slice(0,50).map(r => r.sellVolume||0), 1);
   tbody.innerHTML = sorted.slice(0,500).map(r => {
-    const rCls  = r.roi > 0.15 ? 'spread-high' : r.roi > 0.08 ? 'spread-mid' : 'spread-low';
-    const barW  = Math.max(4, Math.round((r.sellOrders||0)/maxSell*40));
+    const rCls   = r.roi > 0.15 ? 'spread-high' : r.roi > 0.08 ? 'spread-mid' : 'spread-low';
+    const volBarW = Math.max(4, Math.round((r.sellVolume||0)/maxSellVol*40));
+    const sellDaysStr = r.sellDays == null ? '—' : r.sellDays.toFixed(1) + 'd';
     return `<tr>
       <td><div class="item-name" title="${r.name}">${r.name}</div></td>
       <td style="color:var(--text-muted);font-size:10px">${catLabel(r.categoryId)}</td>
@@ -2073,9 +2229,11 @@ function renderStTable() {
       <td>${fmtISK(r.sellNow)}</td>
       <td class="${rCls}">${(r.roi*100).toFixed(1)}%</td>
       <td class="profit-val">${fmtISK(r.profitPerUnit)}</td>
-      <td><div class="compete-bar" style="width:${barW}px"></div>${r.sellOrders}</td>
+      <td><div class="depth-bar" style="width:${volBarW}px"></div>${fmtVol(r.sellVolume)}</td>
+      <td style="color:var(--text-muted)">${sellDaysStr}</td>
+      <td>${fmtVol(r.volume)}${r.volume ? '/d' : ''}</td>
+      <td>${r.sellOrders}</td>
       <td style="color:var(--text-muted)">${r.buyOrders}</td>
-      <td>${fmtVol(r.volume)}</td>
       <td style="color:var(--text-muted)">${r.score.toFixed(0)}</td>
       <td><span class="copy-btn" onclick="event.stopPropagation();copyName(this,'${r.name.replace(/'/g,"\\'")}')">COPY</span></td>
     </tr>`;
@@ -2084,12 +2242,17 @@ function renderStTable() {
 
 function exportStationCSV() {
   if (!stResults.length) { alert('Run a scan first'); return; }
-  const headers = ['Item','Type ID','Buy Now','Sell Now','ROI %','Profit/Unit ISK','Sell Orders','Buy Orders','Avg Vol','Score'];
+  const headers = ['Item','Category','Type ID','Buy Now','Sell Now','ROI %','Profit/Unit ISK','Sell Volume','Sell Days','1d Avg Vol','7d Avg Vol','30d Avg Vol','Sell Orders','Buy Orders','Score'];
   const rows = stResults.map(r => [
-    (r.name||'').replace(/,/g,''), r.typeId,
+    (r.name||'').replace(/,/g,''),
+    catLabel(r.categoryId),
+    r.typeId,
     r.buyNow.toFixed(2), r.sellNow.toFixed(2),
     (r.roi*100).toFixed(2), r.profitPerUnit.toFixed(2),
-    r.sellOrders, r.buyOrders, r.volume, r.score.toFixed(1)
+    r.sellVolume||0,
+    r.sellDays == null ? '' : r.sellDays.toFixed(2),
+    r.dailyVol1||0, r.dailyVol7||0, r.dailyVol30||0,
+    r.sellOrders, r.buyOrders, r.score.toFixed(1)
   ].join(','));
   const csv = [headers.join(','), ...rows].join('\n');
   const a = document.createElement('a');
@@ -2102,10 +2265,22 @@ function exportStationCSV() {
 // INIT
 // ============================================================
 openDB().then(() => {
-  log('INDEXEDDB CACHE READY · v1.3.0 INITIALIZED');
+  log('INDEXEDDB CACHE READY · INITIALIZED');
   updateRateUI();
   updateWlBadge();
   buildRouteMatrix();
+  // Sync vol window toggle buttons with saved preferences
+  document.querySelectorAll('[data-vol-window]').forEach(b => {
+    b.classList.toggle('active', parseInt(b.dataset.volWindow) === currentVolWindow);
+  });
+  document.querySelectorAll('[data-st-vol-window]').forEach(b => {
+    b.classList.toggle('active', parseInt(b.dataset.stVolWindow) === currentStVolWindow);
+  });
+  // Set initial column header labels
+  const vch = document.getElementById('volColHeader');
+  if (vch) vch.textContent = currentVolWindow + 'd';
+  const stvch = document.getElementById('st-volColHeader');
+  if (stvch) stvch.textContent = currentStVolWindow + 'd';
 });
 </script>
 </body>
