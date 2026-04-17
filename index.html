@@ -1171,6 +1171,31 @@ async function checkThrottle() {
   }
 }
 
+// Throttled raw fetch — use this instead of fetch() for endpoints where we
+// don't want full esiFetch caching behavior (bulk region orders, gap-fill
+// per-typeId orders) but DO want rate-limit awareness. This was the missing
+// piece that caused "scan 2 returns wildly different counts than scan 1" —
+// raw fetches bypassed the throttle and hammered ESI until it started 420ing.
+async function throttledFetch(url, options) {
+  await checkThrottle();
+  if (stopFlag || stStopFlag) throw new Error('STOPPED');
+  let resp;
+  try {
+    resp = await fetch(url, options);
+  } catch(e) {
+    errRemain = Math.max(0, errRemain - 2);
+    updateRateUI();
+    throw e;
+  }
+  parseRateHeaders(resp.headers);
+  if (!resp.ok) {
+    // Decrement error budget locally too, in case server didn't send headers
+    errRemain = Math.max(0, errRemain - 5);
+    updateRateUI();
+  }
+  return resp;
+}
+
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 // ============================================================
@@ -1874,6 +1899,8 @@ async function startScan() {
   Object.values(regionOrderMaps).forEach(m => m.forEach((_, tid) => allKnownTypeIds.add(tid)));
 
   let gapsFilled = 0;
+  let gapFailures = 0;
+  let gapAttempts = 0;
   for (const hubId of hubs) {
     if (stopFlag) break;
     const hub  = HUBS[hubId];
@@ -1886,14 +1913,20 @@ async function startScan() {
     if (!missingHere.length) continue;
     log(`${hub.name}: bulk missed ${missingHere.length} typeIds — fetching individually...`);
 
-    for (let i = 0; i < missingHere.length && !stopFlag; i += 50) {
-      const batch = missingHere.slice(i, i + 50);
+    // Adaptive batch size — smaller batches when the error budget is drained.
+    // Prevents a flurry of 50 parallel requests from bottoming out ESI at the
+    // worst possible time (right after scan 1 depleted the budget).
+    for (let i = 0; i < missingHere.length && !stopFlag; ) {
+      const batchSize = errRemain < 50 ? 10 : errRemain < 80 ? 25 : 50;
+      const batch = missingHere.slice(i, i + batchSize);
+      i += batchSize;
       await Promise.all(batch.map(async tid => {
+        gapAttempts++;
         try {
-          const resp = await fetch(
+          const resp = await throttledFetch(
             `https://esi.evetech.net/latest/markets/${hubId}/orders/?order_type=sell&type_id=${tid}`
           );
-          if (!resp.ok) return;
+          if (!resp.ok) { gapFailures++; return; }
           const orders = await resp.json();
           const stationOrders = orders.filter(o =>
             Number(o.location_id) === hub.station &&
@@ -1905,10 +1938,17 @@ async function startScan() {
           const depth = stationOrders.reduce((s, o) => s + Number(o.volume_remain), 0);
           tMap.set(tid, { sells: stationOrders, buys: [], depth });
           gapsFilled++;
-        } catch(e) {}
+        } catch(e) { gapFailures++; }
       }));
     }
     if (gapsFilled > 0) log(`Gap-fill complete: added ${gapsFilled} items to station maps`);
+  }
+  // If gap-fill had a high failure rate, warn about incomplete data.
+  // This is exactly what caused scan 2 to return a wildly different opportunity
+  // count than scan 1 — gap-fill was partially failing and nobody knew.
+  if (gapAttempts > 0 && gapFailures / gapAttempts > 0.1) {
+    const failPct = Math.round((gapFailures / gapAttempts) * 100);
+    log(`⚠ GAP-FILL ${failPct}% FAILURE RATE (${gapFailures}/${gapAttempts}) — results may be incomplete. Wait 60s and rescan for accuracy.`);
   }
   log('RUNNING CROSS-HUB PRICE COMPARISON...');
   setProgress(40, 'Comparing prices across hubs...', '');
@@ -2034,11 +2074,25 @@ async function startScan() {
   await Promise.all(Array.from({length: 24}, histWorker));
 
   // Log history-fetch health — critical for diagnosing "empty results on rescan".
-  // If ESI rate-limited us, most history calls silently fail → every opp looks
-  // like zero-volume → minVol filter drops everything → user sees an empty table.
+  // If ESI rate-limited us, many history calls silently fail → every opp looks
+  // like zero-volume.
+  //
+  // POLICY: when failure rate is LOW (<10%), keep failed-history items and flag
+  // them so the user can see them (a few items legitimately have no history).
+  // When failure rate is HIGH (>=10%), DROP them — otherwise consecutive scans
+  // return wildly different opportunity counts, because failures inflate results
+  // with items that should have been filtered by volume.
+  const histFailRate = uniqueTypeIds.length > 0
+    ? histFailedIds.size / uniqueTypeIds.length
+    : 0;
+  const keepFailedHistory = histFailRate < 0.10; // <10% → keep, >=10% → drop
   if (histFailedIds.size > 0) {
-    const failPct = Math.round((histFailedIds.size / uniqueTypeIds.length) * 100);
-    log(`⚠ HISTORY: ${histSuccess}/${uniqueTypeIds.length} succeeded · ${histFailedIds.size} failed (${failPct}%) — those items kept, treated as unknown volume`);
+    const failPct = Math.round(histFailRate * 100);
+    if (keepFailedHistory) {
+      log(`⚠ HISTORY: ${histSuccess}/${uniqueTypeIds.length} succeeded · ${histFailedIds.size} failed (${failPct}%) — kept as unknown volume`);
+    } else {
+      log(`⚠ HISTORY: ${histSuccess}/${uniqueTypeIds.length} succeeded · ${histFailedIds.size} failed (${failPct}%) — DROPPED from results (failure rate too high to trust). Wait 60s and rescan.`);
+    }
   } else {
     log(`HISTORY OK: ${histSuccess}/${uniqueTypeIds.length} items`);
   }
@@ -2046,12 +2100,14 @@ async function startScan() {
   // Apply history + outlier filter
   // Filtering uses the CURRENTLY SELECTED volume window (currentVolWindow).
   // Items below the threshold in the chosen window are dropped.
-  // Items whose history FETCH FAILED (vs returned zero) are kept with volume=0
-  // and a flag — otherwise a rate-limited second scan would look completely empty.
   let outlierStripped = 0;
   let volFilterStripped = 0;
+  let historyDropped = 0;
   const filtered = opportunities.filter(o => {
     const histOk = histMap[o.typeId] !== undefined;
+    // At high failure rate, drop items with failed history — they pollute results
+    // and cause scan-to-scan inconsistency.
+    if (!histOk && !keepFailedHistory) { historyDropped++; return false; }
     const windows = histMap[o.typeId] || { v1:0, v7:0, v30:0 };
     o.dailyVol1  = windows.v1;
     o.dailyVol7  = windows.v7;
@@ -2061,8 +2117,8 @@ async function startScan() {
     o.volume = vol; // legacy alias — used by Score
     // Sell Days — how many days of supply the origin station's stock represents
     o.sellDays = (vol > 0 && o.sellVolume != null) ? (o.sellVolume / vol) : null;
-    // Only apply vol filter if we actually got history back. Items with failed
-    // history keep their place in results so the user isn't staring at an empty table.
+    // Only apply vol filter when we have valid history data. Items with failed
+    // history (and low overall failure rate) still pass so they're visible.
     if (histOk && vol < minVol) { volFilterStripped++; return false; }
     // Outlier filter: skip if either price exceeds maxPriceMult × recent avg
     if (maxPriceMult > 0) {
@@ -2076,6 +2132,7 @@ async function startScan() {
     return true;
   });
   if (volFilterStripped > 0)  log(`VOL FILTER: removed ${volFilterStripped} low-volume opps (below ${minVol}/day in ${currentVolWindow}d window)`);
+  if (historyDropped > 0)     log(`HISTORY DROP: removed ${historyDropped} opps with failed history fetch`);
   if (outlierStripped > 0) log(`OUTLIER FILTER: removed ${outlierStripped} manipulated price opportunities`);
 
   // Diagnostic: if scan produced candidates but everything got filtered out,
@@ -2564,7 +2621,7 @@ async function startStationScan() {
   try {
     let page = 1;
     while (!stStopFlag) {
-      const resp = await fetch(
+      const resp = await throttledFetch(
         `https://esi.evetech.net/latest/markets/${hubId}/types/?page=${page}`
       );
       if (!resp.ok) break;
@@ -2579,17 +2636,25 @@ async function startStationScan() {
   const missingIds = allTypeIds.filter(id => !typeMap.has(id));
   stLog(`Gap-fill: ${allTypeIds.length.toLocaleString()} active types · ${missingIds.length.toLocaleString()} missing from bulk — fetching...`);
 
-  // Fetch missing items in parallel batches of 50
-  for (let i = 0; i < missingIds.length && !stStopFlag; i += 50) {
-    const batch = missingIds.slice(i, i + 50);
+  // Fetch missing items via throttledFetch with adaptive batch sizing.
+  // When the error budget is low, smaller batches prevent us from hammering
+  // ESI into a hard 420 (which is what caused scan 2 to return 8 items when
+  // scan 1 returned 160 — gap-fill was silently dropping most requests).
+  let stGapFailures = 0;
+  let stGapAttempts = 0;
+  for (let i = 0; i < missingIds.length && !stStopFlag; ) {
+    const batchSize = errRemain < 50 ? 10 : errRemain < 80 ? 25 : 50;
+    const batch = missingIds.slice(i, i + batchSize);
+    i += batchSize;
     stSetProgress(25 + (i / missingIds.length) * 15,
       `Gap-fill: ${i}/${missingIds.length} items...`, '');
     await Promise.all(batch.map(async typeId => {
+      stGapAttempts++;
       try {
-        const resp = await fetch(
+        const resp = await throttledFetch(
           `https://esi.evetech.net/latest/markets/${hubId}/orders/?order_type=all&type_id=${typeId}`
         );
-        if (!resp.ok) return;
+        if (!resp.ok) { stGapFailures++; return; }
         const itemOrders = await resp.json();
         const stationOrders = itemOrders.filter(o =>
           Number(o.location_id) === hub.station
@@ -2603,10 +2668,17 @@ async function startStationScan() {
         }
         e.sells.sort((a,b) => Number(a.price) - Number(b.price));
         e.buys.sort((a,b)  => Number(b.price) - Number(a.price));
-      } catch(e) {}
+      } catch(e) { stGapFailures++; }
     }));
   }
   stLog(`${hub.name}: ${typeMap.size.toLocaleString()} items after gap-fill`);
+  // High failure rate means the typeMap is incomplete → opportunity count will
+  // be wildly different from a healthy scan. Warn the user so they don't trust
+  // apples-to-oranges comparisons between consecutive scans.
+  if (stGapAttempts > 0 && stGapFailures / stGapAttempts > 0.1) {
+    const failPct = Math.round((stGapFailures / stGapAttempts) * 100);
+    stLog(`⚠ GAP-FILL ${failPct}% FAILURE RATE (${stGapFailures}/${stGapAttempts}) — many items missing. Wait 60s and rescan for a complete picture.`);
+  }
 
   // ── Step 3: Find spread opportunities ─────────────────────────────────
   // Two distinct opportunity types emerge from the bid/ask prices:
