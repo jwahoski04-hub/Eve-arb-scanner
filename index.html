@@ -172,10 +172,11 @@ html,body{
 .haul-stat-label{font-family:var(--mono);font-size:9px;color:var(--text-muted);}
 .haul-stat-val{font-family:var(--mono);font-size:13px;color:var(--amber);}
 
-.hub-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;}
+.hub-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px;}
 .hub-label{font-family:var(--mono);font-size:9px;color:var(--text-muted);letter-spacing:0.08em;text-transform:uppercase;margin-right:2px;}
-.hub-check{display:flex;align-items:center;gap:5px;cursor:pointer;font-family:var(--mono);font-size:11px;color:var(--text);
-  padding:4px 10px;border:1px solid var(--border);border-radius:2px;transition:all 0.15s;user-select:none;}
+.hub-check{display:flex;align-items:center;gap:4px;cursor:pointer;font-family:var(--mono);font-size:10px;color:var(--text);
+  padding:3px 8px;border:1px solid var(--border);border-radius:2px;transition:all 0.15s;user-select:none;
+  letter-spacing:0.2px;}
 .hub-check.active{border-color:var(--cyan-mid);color:var(--cyan);background:var(--cyan-dim);}
 .hub-dot{width:5px;height:5px;border-radius:50%;background:var(--text-dim);}
 .hub-check.active .hub-dot{background:var(--cyan);box-shadow:0 0 6px var(--cyan);}
@@ -214,9 +215,10 @@ html,body{
 .hub-check.c-hek:not(.active):hover{opacity:0.9;border-color:rgba(255,100,100,0.3);}
 .hub-check.c-rens:not(.active):hover{opacity:0.9;border-color:rgba(180,100,255,0.3);}
 
-.cat-row{display:flex;gap:5px;flex-wrap:wrap;align-items:center;}
-.cat-btn{font-family:var(--mono);font-size:10px;padding:3px 9px;border:1px solid var(--border);border-radius:2px;
-  cursor:pointer;color:var(--text-muted);background:transparent;transition:all 0.15s;user-select:none;}
+.cat-row{display:flex;gap:4px;flex-wrap:wrap;align-items:center;}
+.cat-btn{font-family:var(--mono);font-size:9px;padding:2px 7px;border:1px solid var(--border);border-radius:2px;
+  cursor:pointer;color:var(--text-muted);background:transparent;transition:all 0.15s;user-select:none;
+  letter-spacing:0.2px;line-height:1.5;}
 .cat-btn:hover{color:var(--text);border-color:var(--border-bright);}
 .cat-btn.active{border-color:var(--amber);color:var(--amber);background:var(--amber-dim);}
 .cat-btn.all-btn.active{border-color:var(--cyan);color:var(--cyan);background:var(--cyan-dim);}
@@ -358,11 +360,12 @@ td:last-child{border-right:none;}
 #resultsTable thead th:nth-child(1),
 #resultsTable tbody td:nth-child(1){padding-left:6px;padding-right:6px;}
 tbody tr:nth-child(even){background:rgba(255,255,255,0.03);}
-tr:hover td{background:rgba(74,214,255,0.09);}
 tr.new-opp td{animation:flashNew 2s ease-out forwards;}
 @keyframes flashNew{0%{background:rgba(74,222,128,0.15)}100%{background:transparent}}
 tr.top-row td{background:rgba(251,191,36,0.04);}
 tr.expanded-row td{background:var(--bg-2);padding:0;border-bottom:2px solid var(--border-hot);text-align:left;}
+/* Hover — placed AFTER state rules so it wins the cascade. Same visual in both tabs. */
+tbody tr:hover td{background:rgba(74,214,255,0.12) !important;}
 
 .item-name{font-family:var(--ui);font-size:12px;color:var(--text);white-space:normal;word-break:break-word;}
 .hub-pill{font-size:9px;padding:2px 6px;border-radius:1px;border:1px solid var(--border);}
@@ -453,7 +456,7 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
 /* STATION TRADING */
 .st-controls{background:var(--surface);border:1px solid var(--border);border-radius:3px;padding:1rem 1.25rem;margin-bottom:1rem;}
 .st-ctrl-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr)) auto;gap:10px;align-items:end;margin-bottom:1rem;}
-.st-hub-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px;}
+.st-hub-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:8px;}
 .spread-high{color:var(--green);font-weight:600;}
 .spread-mid{color:var(--amber);}
 .spread-low{color:var(--text-muted);}
@@ -646,18 +649,18 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
         <thead><tr>
           <th style="width:28px"></th>
           <th style="width:22%" onclick="sortTable('name')">Item <span class="sort-arrow" id="sort-name"></span></th>
-          <th style="width:7%" onclick="sortTable('category')">Category <span class="sort-arrow" id="sort-category"></span></th>
-          <th style="width:9%" onclick="sortTable('route')">Route <span class="sort-arrow" id="sort-route"></span></th>
-          <th style="width:7%" onclick="sortTable('buyPrice')">Sell Price <span class="sort-arrow" id="sort-buyPrice"></span></th>
-          <th style="width:8%" onclick="sortTable('sellVolume')"><span class="th-depth-wrap">Sell Volume <span class="sort-arrow" id="sort-sellVolume"></span><span class="depth-info">i</span><div class="depth-tip"><div class="depth-tip-title">Sell Volume</div><div class="depth-tip-body">Total units for sale at the origin hub's main station across all sell orders. This is how many units you can actually buy at the listed price. Compare against your cargo capacity to estimate how many trips are needed to clear the opportunity.</div></div></span></th>
-          <th style="width:6%" onclick="sortTable('sellDays')"><span class="th-depth-wrap">Sell Days <span class="sort-arrow" id="sort-sellDays"></span><span class="depth-info">i</span><div class="depth-tip"><div class="depth-tip-title">Sell Days</div><div class="depth-tip-body">Days of supply at the origin station at the current average daily sell rate. Sell Volume ÷ Sell Avg. Lower = more competitive market; higher = slower turnover.</div></div></span></th>
-          <th style="width:7%" onclick="sortTable('sellAvg')"><span id="volColHeader">7d</span> Sell Avg <span class="sort-arrow" id="sort-sellAvg"></span></th>
-          <th style="width:7%" onclick="sortTable('sellPrice')">Dest Price <span class="sort-arrow" id="sort-sellPrice"></span></th>
-          <th style="width:6%" onclick="sortTable('margin')" class="sorted">Margin % <span class="sort-arrow" id="sort-margin">▼</span></th>
-          <th style="width:7%" onclick="sortTable('profit')">Profit/Unit <span class="sort-arrow" id="sort-profit"></span></th>
-          <th style="width:7%" onclick="sortTable('tripProfit')">Trip Profit <span class="sort-arrow" id="sort-tripProfit"></span></th>
-          <th style="width:5%" onclick="sortTable('score')"><span class="th-score-wrap">Score <span class="sort-arrow" id="sort-score"></span><span class="score-info">i</span><div class="score-tip"><div class="score-tip-title">Opportunity Score</div><div class="score-tip-formula">log₁₀(sell avg) × margin% × 100</div><div class="score-tip-body">Combines liquidity and profitability. High score = high volume AND high margin. Sort the Velocity column separately to rank by how fast stock drains.</div></div></span></th>
-          <th style="width:5%" onclick="sortTable('velocity')"><span class="th-score-wrap">Velocity <span class="sort-arrow" id="sort-velocity"></span><span class="score-info">i</span><div class="score-tip"><div class="score-tip-title">Velocity Multiplier</div><div class="score-tip-formula">Sell Avg ÷ Sell Volume</div><div class="score-tip-body">How many times per day the current stock fully turns over. Green &gt; 1 = demand outpaces supply (fast-moving). Amber 0.3-1 = balanced. Muted &lt; 0.3 = oversupplied.</div></div></span></th>
+          <th style="width:6.3%" onclick="sortTable('category')">Category <span class="sort-arrow" id="sort-category"></span></th>
+          <th style="width:6.3%" onclick="sortTable('route')">Route <span class="sort-arrow" id="sort-route"></span></th>
+          <th style="width:6.3%" onclick="sortTable('buyPrice')">Sell Price <span class="sort-arrow" id="sort-buyPrice"></span></th>
+          <th style="width:6.3%" onclick="sortTable('sellVolume')"><span class="th-depth-wrap">Sell Volume <span class="sort-arrow" id="sort-sellVolume"></span><span class="depth-info">i</span><div class="depth-tip"><div class="depth-tip-title">Sell Volume</div><div class="depth-tip-body">Total units for sale at the origin hub's main station across all sell orders. This is how many units you can actually buy at the listed price. Compare against your cargo capacity to estimate how many trips are needed to clear the opportunity.</div></div></span></th>
+          <th style="width:6.3%" onclick="sortTable('sellDays')"><span class="th-depth-wrap">Sell Days <span class="sort-arrow" id="sort-sellDays"></span><span class="depth-info">i</span><div class="depth-tip"><div class="depth-tip-title">Sell Days</div><div class="depth-tip-body">Days of supply at the origin station at the current average daily sell rate. Sell Volume ÷ Sell Avg. Lower = more competitive market; higher = slower turnover.</div></div></span></th>
+          <th style="width:6.3%" onclick="sortTable('sellAvg')"><span id="volColHeader">7d</span> Sell Avg <span class="sort-arrow" id="sort-sellAvg"></span></th>
+          <th style="width:6.3%" onclick="sortTable('sellPrice')">Dest Price <span class="sort-arrow" id="sort-sellPrice"></span></th>
+          <th style="width:6.3%" onclick="sortTable('margin')" class="sorted">Margin % <span class="sort-arrow" id="sort-margin">▼</span></th>
+          <th style="width:6.3%" onclick="sortTable('profit')">Profit/Unit <span class="sort-arrow" id="sort-profit"></span></th>
+          <th style="width:6.3%" onclick="sortTable('tripProfit')">Trip Profit <span class="sort-arrow" id="sort-tripProfit"></span></th>
+          <th style="width:6.3%" onclick="sortTable('score')"><span class="th-score-wrap">Score <span class="sort-arrow" id="sort-score"></span><span class="score-info">i</span><div class="score-tip"><div class="score-tip-title">Opportunity Score</div><div class="score-tip-formula">log₁₀(sell avg) × margin% × 100</div><div class="score-tip-body">Combines liquidity and profitability. High score = high volume AND high margin. Sort the Velocity column separately to rank by how fast stock drains.</div></div></span></th>
+          <th style="width:6.3%" onclick="sortTable('velocity')"><span class="th-score-wrap">Velocity <span class="sort-arrow" id="sort-velocity"></span><span class="score-info">i</span><div class="score-tip"><div class="score-tip-title">Velocity Multiplier</div><div class="score-tip-formula">Sell Avg ÷ Sell Volume</div><div class="score-tip-body">How many times per day the current stock fully turns over. Green &gt; 1 = demand outpaces supply (fast-moving). Amber 0.3-1 = balanced. Muted &lt; 0.3 = oversupplied.</div></div></span></th>
         </tr></thead>
         <tbody id="resultsBody">
           <tr><td colspan="14"><div style="text-align:center;padding:3rem;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Bulk region fetch — all orders pulled in one pass per hub<br>Results include Sell Volume, Sell Days, and 1d/7d/30d volume windows<br>Click SCAN ALL to begin</div></td></tr>
