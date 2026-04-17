@@ -132,13 +132,13 @@ html,body{
 .ctrl{display:flex;flex-direction:column;gap:4px;}
 .ctrl-label{font-family:var(--mono);font-size:9px;color:var(--text-muted);letter-spacing:0.08em;text-transform:uppercase;}
 .ctrl input,.ctrl select{background:var(--bg);border:1px solid var(--border-bright);border-radius:2px;
-  color:var(--text);font-family:var(--mono);font-size:12px;padding:6px 8px;height:32px;outline:none;transition:border-color 0.2s;}
+  color:var(--text);font-family:var(--mono);font-size:11px;padding:4px 7px;height:28px;outline:none;transition:border-color 0.2s;width:100%;}
 .ctrl input:focus,.ctrl select:focus{border-color:var(--cyan);}
 .ctrl select option{background:#0f1520;}
 /* Money input — text field with an ISK prefix pill, formats with thousands separators */
 .money-input{
   display:flex;align-items:stretch;background:var(--bg);
-  border:1px solid var(--border-bright);border-radius:2px;height:32px;overflow:hidden;
+  border:1px solid var(--border-bright);border-radius:2px;height:28px;overflow:hidden;
   transition:border-color 0.2s;
 }
 .money-input:focus-within{border-color:var(--amber);}
@@ -154,9 +154,9 @@ html,body{
   font-variant-numeric:tabular-nums;font-size:12px;padding:6px 8px;text-align:right;
 }
 /* 1d/7d/30d segmented toggle — matches overall control height and style */
-.vol-toggle{display:inline-flex;border:1px solid var(--border-bright);border-radius:2px;height:32px;overflow:hidden;background:var(--bg);}
-.vol-btn{flex:1;min-width:36px;background:transparent;border:none;border-right:1px solid var(--border);color:var(--text-muted);
-  font-family:var(--mono);font-size:11px;padding:0 10px;cursor:pointer;transition:all 0.15s;user-select:none;letter-spacing:0.05em;}
+.vol-toggle{display:inline-flex;border:1px solid var(--border-bright);border-radius:2px;height:28px;overflow:hidden;background:var(--bg);width:100%;}
+.vol-btn{flex:1;min-width:32px;background:transparent;border:none;border-right:1px solid var(--border);color:var(--text-muted);
+  font-family:var(--mono);font-size:10px;padding:0 8px;cursor:pointer;transition:all 0.15s;user-select:none;letter-spacing:0.05em;}
 .vol-btn:last-child{border-right:none;}
 .vol-btn:hover{color:var(--text);background:var(--surface2);}
 .vol-btn.active{background:var(--cyan-dim);color:var(--cyan);}
@@ -241,29 +241,61 @@ html,body{
 .cat-hint .tip-right{color:var(--red);font-weight:600;}      /* matches excluded cat-btn red */
 
 /* Route matrix */
-.route-matrix-wrap{margin-top:10px;}
+.route-matrix-wrap{margin-top:14px;margin-bottom:4px;}
 .route-matrix-label{
-  font-family:var(--mono);font-size:10px;color:var(--cyan);letter-spacing:0.08em;text-transform:uppercase;
-  display:flex;align-items:center;gap:10px;cursor:pointer;user-select:none;
-  padding:8px 14px;border:1px solid var(--cyan-mid);border-radius:3px;
-  background:linear-gradient(180deg, rgba(0,200,255,0.08), rgba(0,200,255,0.03));
-  box-shadow:0 1px 0 rgba(0,200,255,0.18) inset, 0 2px 6px rgba(0,0,0,0.25);
-  transition:all 0.15s ease;margin-bottom:0;font-weight:600;
+  font-family:var(--font-sans);font-size:13px;color:var(--cyan);letter-spacing:1.2px;text-transform:uppercase;
+  display:flex;align-items:center;gap:12px;cursor:pointer;user-select:none;
+  padding:12px 18px;border:2px solid var(--cyan);border-radius:4px;
+  background:linear-gradient(180deg, rgba(74,214,255,0.14), rgba(74,214,255,0.05));
+  box-shadow:
+    0 1px 0 rgba(74,214,255,0.30) inset,
+    0 0 0 3px rgba(74,214,255,0.08),
+    0 4px 10px rgba(0,0,0,0.35),
+    0 0 18px rgba(74,214,255,0.22);
+  transition:all 0.2s ease;margin-bottom:0;font-weight:700;
+  animation:routePulse 2.8s ease-in-out infinite;
+}
+/* Soft pulsing glow — draws the eye without being annoying. Pauses on hover/open. */
+@keyframes routePulse {
+  0%, 100% { box-shadow:
+    0 1px 0 rgba(74,214,255,0.30) inset,
+    0 0 0 3px rgba(74,214,255,0.08),
+    0 4px 10px rgba(0,0,0,0.35),
+    0 0 18px rgba(74,214,255,0.22); }
+  50%      { box-shadow:
+    0 1px 0 rgba(74,214,255,0.40) inset,
+    0 0 0 4px rgba(74,214,255,0.15),
+    0 4px 14px rgba(0,0,0,0.4),
+    0 0 28px rgba(74,214,255,0.4); }
 }
 .route-matrix-label:hover{
   color:var(--cyan);border-color:var(--cyan);
-  background:linear-gradient(180deg, rgba(0,200,255,0.14), rgba(0,200,255,0.06));
-  box-shadow:0 1px 0 rgba(0,200,255,0.25) inset, 0 4px 10px rgba(0,200,255,0.15);
-  transform:translateY(-1px);
+  background:linear-gradient(180deg, rgba(74,214,255,0.22), rgba(74,214,255,0.08));
+  transform:translateY(-2px);
+  animation:none;
+  box-shadow:
+    0 1px 0 rgba(74,214,255,0.45) inset,
+    0 0 0 4px rgba(74,214,255,0.20),
+    0 6px 18px rgba(74,214,255,0.35);
 }
 .route-matrix-label.open{
   border-color:var(--cyan);
-  background:linear-gradient(180deg, rgba(0,200,255,0.10), rgba(0,200,255,0.04));
-  box-shadow:0 0 0 1px var(--cyan-mid), 0 2px 6px rgba(0,0,0,0.3);
-  margin-bottom:8px;
+  background:linear-gradient(180deg, rgba(74,214,255,0.16), rgba(74,214,255,0.05));
+  box-shadow:0 0 0 2px rgba(74,214,255,0.35), 0 2px 8px rgba(0,0,0,0.4);
+  margin-bottom:10px;
+  animation:none;
 }
-.route-matrix-toggle{font-size:10px;color:var(--cyan);transition:transform 0.2s;display:inline-block;margin-right:2px;}
+.route-matrix-toggle{
+  font-size:13px;color:var(--cyan);transition:transform 0.25s;display:inline-block;
+  margin-right:2px;text-shadow:0 0 8px rgba(74,214,255,0.6);
+}
 .route-matrix-toggle.open{transform:rotate(90deg);}
+/* Secondary hint text inside the button — explains what it does at a glance */
+.route-matrix-hint{
+  font-family:var(--font-sans);font-size:10px;font-weight:400;
+  color:var(--text-2);letter-spacing:0.3px;text-transform:none;margin-left:4px;
+}
+.route-matrix-label.open .route-matrix-hint{color:var(--text-1);}
 .route-matrix-actions{display:flex;gap:5px;margin-left:auto;}
 .route-matrix-act{font-family:var(--mono);font-size:9px;padding:3px 8px;border:1px solid var(--border-bright);border-radius:2px;cursor:pointer;color:var(--text-muted);background:var(--bg);transition:all 0.15s;}
 .route-matrix-act:hover{color:var(--cyan);border-color:var(--cyan);}
@@ -277,14 +309,14 @@ html,body{
 .rm-cb{accent-color:var(--cyan);width:12px;height:12px;cursor:pointer;}
 .rm-origin-label{font-family:var(--mono);font-size:9px;color:var(--text-muted);padding:4px 8px;background:var(--surface2);border-right:1px solid var(--border);border-bottom:1px solid var(--border);text-align:right;letter-spacing:0.06em;display:flex;align-items:center;justify-content:flex-end;}
 
-.btn-scan{font-family:var(--mono);font-size:12px;font-weight:600;background:transparent;border:1px solid var(--cyan);
-  color:var(--cyan);padding:7px 18px;border-radius:2px;cursor:pointer;letter-spacing:0.08em;text-transform:uppercase;
-  transition:all 0.2s;white-space:nowrap;height:32px;}
+.btn-scan{font-family:var(--mono);font-size:11px;font-weight:600;background:transparent;border:1px solid var(--cyan);
+  color:var(--cyan);padding:4px 14px;border-radius:2px;cursor:pointer;letter-spacing:0.08em;text-transform:uppercase;
+  transition:all 0.2s;white-space:nowrap;height:28px;}
 .btn-scan:hover{background:var(--cyan-dim);}
 .btn-scan:disabled{opacity:0.4;cursor:not-allowed;}
 .btn-scan.running{border-color:var(--amber);color:var(--amber);}
-.btn-stop{font-family:var(--mono);font-size:11px;background:transparent;border:1px solid var(--red);
-  color:var(--red);padding:5px 12px;border-radius:2px;cursor:pointer;height:32px;}
+.btn-stop{font-family:var(--mono);font-size:10px;background:transparent;border:1px solid var(--red);
+  color:var(--red);padding:3px 10px;border-radius:2px;cursor:pointer;height:28px;}
 .btn-stop:hover{background:var(--red-dim);}
 .btn-sm{font-family:var(--mono);font-size:10px;background:transparent;border:1px solid var(--border-bright);
   color:var(--text-muted);padding:3px 9px;border-radius:2px;cursor:pointer;transition:all 0.15s;}
@@ -360,8 +392,6 @@ td:last-child{border-right:none;}
 #resultsTable thead th:nth-child(1),
 #resultsTable tbody td:nth-child(1){padding-left:6px;padding-right:6px;}
 tbody tr:nth-child(even){background:rgba(255,255,255,0.03);}
-tr.new-opp td{animation:flashNew 2s ease-out forwards;}
-@keyframes flashNew{0%{background:rgba(74,222,128,0.15)}100%{background:transparent}}
 tr.top-row td{background:rgba(251,191,36,0.04);}
 tr.expanded-row td{background:var(--bg-2);padding:0;border-bottom:2px solid var(--border-hot);text-align:left;}
 /* Hover — placed AFTER state rules so it wins the cascade. Same visual in both tabs. */
@@ -461,7 +491,7 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
 
 /* STATION TRADING */
 .st-controls{background:var(--surface);border:1px solid var(--border);border-radius:3px;padding:1rem 1.25rem;margin-bottom:1rem;}
-.st-ctrl-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr)) auto;gap:10px;align-items:end;margin-bottom:1rem;}
+.st-ctrl-grid{display:grid;grid-template-columns:repeat(6,minmax(110px,160px)) auto;gap:8px;align-items:end;margin-bottom:1rem;}
 .st-hub-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:8px;}
 .spread-high{color:var(--green);font-weight:600;}
 .spread-mid{color:var(--amber);}
@@ -632,7 +662,6 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
     <div class="table-header">
       <div class="table-title">HUB TRADING OPPORTUNITIES <span style="color:var(--text-dim)" id="resultCount"></span></div>
       <div class="table-filters">
-        <button class="btn-sm" onclick="toggleNewOnly()" id="newOnlyBtn">NEW ONLY</button>
       </div>
     </div>
 
@@ -641,6 +670,7 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
       <div class="route-matrix-label" onclick="toggleRouteMatrix()">
         <span class="route-matrix-toggle" id="routeMatrixToggle">▶</span>
         FILTER BY ROUTE
+        <span class="route-matrix-hint">click to narrow results by hub-to-hub route</span>
         <div class="route-matrix-actions" onclick="event.stopPropagation()">
           <button class="route-matrix-act" onclick="setAllRoutes(true)">ALL</button>
           <button class="route-matrix-act" onclick="setAllRoutes(false)">NONE</button>
@@ -1285,8 +1315,7 @@ async function batchResolveNames(typeIds) {
 // ============================================================
 // APP STATE
 // ============================================================
-let allResults = [], filteredResults = [], prevResultKeys = new Set(), newOppKeys = new Set();
-let scanAllResults = []; // unfiltered scan output — used for live category re-filtering
+let allResults = [], filteredResults = [], scanAllResults = [];
 // Volume window for Hub Trading — 1, 7, or 30 day average daily volume.
 // Switches which dailyVol{1,7,30} field is used for display, filtering, and scoring.
 // Persists across sessions via localStorage.
@@ -1294,7 +1323,7 @@ let currentVolWindow = parseInt(localStorage.getItem('eve-arb-vol-window')) || 7
 let watchlist = JSON.parse(localStorage.getItem('eve-arb-wl') || '[]');
 let scanActive = false, stopFlag = false;
 let currentSort = 'margin', currentDir = -1;
-let showNewOnly = false, scanStartTime = 0, expandedRow = null;
+let scanStartTime = 0, expandedRow = null;
 let selectedCats = new Set(['all']);
 // Categories explicitly excluded in ALL mode (right-click to toggle).
 // Ignored when specific categories are selected (use normal toggle for those).
@@ -1519,10 +1548,11 @@ function setProgress(pct, text, sub) {
   document.getElementById('progressPct').textContent = sub || '';
 }
 // Click-to-copy for item names — matches Market Supply tool pattern.
-// Delegates from the document so it works for all current and future rows
-// without re-binding on every render. Reads name from data-copy-text attr.
-document.addEventListener('click', async (e) => {
-  const cell = e.target.closest('.item-name.copyable');
+// Shared copy routine so it works whether invoked by the document delegate
+// OR by a direct inline call from a row that needs to stopPropagation
+// (Hub Trading rows have a click handler for expand, so the span must
+// stop the event AND still trigger the copy itself).
+async function copyItemName(cell) {
   if (!cell) return;
   const text = cell.getAttribute('data-copy-text');
   if (!text) return;
@@ -1538,6 +1568,12 @@ document.addEventListener('click', async (e) => {
   }
   cell.classList.add('copied');
   setTimeout(() => cell.classList.remove('copied'), 1200);
+}
+// Document delegate handles cells that don't need stopPropagation (Station Trading, etc.)
+document.addEventListener('click', (e) => {
+  const cell = e.target.closest('.item-name.copyable');
+  if (!cell) return;
+  copyItemName(cell);
 });
 
 function fmtISK(v) {
@@ -1629,8 +1665,7 @@ async function startScan() {
   if (hubs.length < 2) { alert('Select at least 2 trade hubs'); return; }
 
   scanActive = true; stopFlag = false;
-  prevResultKeys = new Set(allResults.map(oppKey));
-  allResults = []; filteredResults = []; newOppKeys.clear(); scanAllResults = [];
+  allResults = []; filteredResults = []; scanAllResults = [];
   cacheHits = 0; cacheMisses = 0; cache304s = 0; bytesSaved = 0;
   scanStartTime = Date.now();
 
@@ -1764,9 +1799,6 @@ async function startScan() {
         const net    = (sellPrice - buyPrice) - (sellPrice * tax);
         const margin = net / buyPrice;
         if (margin < minMargin || net < minProfit) continue;
-        const key   = `${typeId}-${buyHubId}-${sellHubId}`;
-        const isNew = !prevResultKeys.has(key);
-        if (isNew) newOppKeys.add(key);
         opportunities.push({ typeId, name: null, buyHubId, sellHubId,
           buyHubName: HUBS[buyHubId].name, sellHubName: HUBS[sellHubId].name,
           buyPrice, sellPrice, profit: net, margin,
@@ -1780,7 +1812,7 @@ async function startScan() {
           depth: bEntry.depth,                       // same as sellVolume — kept for existing code
           volume: 0,                                 // currently-selected window's daily vol
           score: 0, packagedVol: SDE_VOL_CACHE[typeId] || 1,
-          tripProfit: 0, tripUnits: 0, iskPerM3: 0, isNew });
+          tripProfit: 0, tripUnits: 0, iskPerM3: 0 });
       }
     }
     compared++;
@@ -1941,20 +1973,9 @@ function updateBestMetrics() {
 // ============================================================
 // TABLE RENDER
 // ============================================================
-function toggleNewOnly() {
-  showNewOnly = !showNewOnly;
-  document.getElementById('newOnlyBtn').style.borderColor = showNewOnly ? 'var(--green)' : '';
-  document.getElementById('newOnlyBtn').style.color       = showNewOnly ? 'var(--green)' : '';
-  applyFilter();
-}
-
 function applyFilter() {
   const base = applyCatFilter(scanAllResults.length ? scanAllResults : allResults, selectedCats, excludedCats);
-  filteredResults = base.filter(r => {
-    if (!selectedRoutes.has(routeKey(r.buyHubId, r.sellHubId))) return false;
-    if (showNewOnly && !r.isNew) return false;
-    return true;
-  });
+  filteredResults = base.filter(r => selectedRoutes.has(routeKey(r.buyHubId, r.sellHubId)));
   document.getElementById('tab-results-count').textContent = filteredResults.length || base.length;
   renderTable();
 }
@@ -1969,7 +1990,7 @@ function sortTable(key) {
 }
 
 function renderTable() {
-  const display = filteredResults.length ? filteredResults : (showNewOnly ? [] : allResults);
+  const display = filteredResults.length ? filteredResults : allResults;
   // Keep the column header in sync with the active volume window
   const vch = document.getElementById('volColHeader');
   if (vch) vch.textContent = currentVolWindow + 'd';
@@ -2013,12 +2034,11 @@ function renderTable() {
     const name      = r.name||`#${r.typeId}`;
     const isWatched = watchlist.some(w=>w.typeId===r.typeId);
     const volBarW   = Math.max(4, Math.round((r.sellVolume||0)/maxSellVol*40));
-    const newFlag   = r.isNew ? '🟢' : '';
-    const rowCls    = r.isNew ? 'new-opp' : i<3 ? 'top-row' : '';
+    const rowCls    = i<3 ? 'top-row' : '';
     const sellDaysStr = r.sellDays == null ? '—' : r.sellDays.toFixed(1) + 'd';
     return `<tr class="${rowCls}" data-key="${key}" onclick="toggleExpand('${key}',${r.typeId})">
       <td><span class="watchstar" onclick="event.stopPropagation();toggleWatch(${JSON.stringify(r).replace(/"/g,'&quot;')})">${isWatched?'★':'☆'}</span></td>
-      <td><div class="item-cell"><img class="item-icon" src="https://images.evetech.net/types/${r.typeId}/icon?size=32" width="24" height="24" alt="" loading="lazy" onerror="this.style.visibility='hidden'"><span class="item-name copyable" title="${name} — click to copy" data-copy-text="${name.replace(/"/g,'&quot;')}" onclick="event.stopPropagation()">${newFlag}${name}</span></div></td>
+      <td><div class="item-cell"><img class="item-icon" src="https://images.evetech.net/types/${r.typeId}/icon?size=32" width="24" height="24" alt="" loading="lazy" onerror="this.style.visibility='hidden'"><span class="item-name copyable" title="${name} — click to copy" data-copy-text="${name.replace(/"/g,'&quot;')}" onclick="event.stopPropagation();copyItemName(this)">${name}</span></div></td>
       <td style="color:var(--text-muted);font-size:10px">${catLabel(r.categoryId)}</td>
       <td><span class="hub-pill ${bCls}">${r.buyHubName}</span><span class="arrow">→</span><span class="hub-pill ${sCls}">${r.sellHubName}</span></td>
       <td>${fmtISK(r.buyPrice)}</td>
