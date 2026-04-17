@@ -321,6 +321,9 @@ html,body{
 .btn-sm{font-family:var(--mono);font-size:10px;background:transparent;border:1px solid var(--border-bright);
   color:var(--text-muted);padding:3px 9px;border-radius:2px;cursor:pointer;transition:all 0.15s;}
 .btn-sm:hover{color:var(--text);background:var(--surface2);}
+.back-hub{display:inline-flex;align-items:center;gap:8px;padding:8px 14px;border:1px solid var(--border-bright);border-radius:3px;background:var(--surface2);color:var(--text-muted);text-decoration:none;font-family:var(--mono);font-size:12px;letter-spacing:0.5px;transition:all .2s ease;white-space:nowrap;}
+.back-hub:hover{border-color:var(--cyan);color:var(--cyan);background:var(--cyan-dim);box-shadow:0 0 12px rgba(74,214,255,0.18);}
+.back-hub-arrow{font-size:14px;line-height:1;}
 
 .progress-area{margin-bottom:1rem;}
 .progress-bar-wrap{height:3px;background:var(--surface2);border-radius:2px;overflow:hidden;margin-bottom:5px;}
@@ -535,7 +538,8 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
   <div class="header">
     <div class="logo">ARB SCANNER<small>EVE MARKET INTELLIGENCE</small></div>
     <div class="live-badge"><div class="live-dot"></div>ESI LIVE</div>
-    <div style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;">
+    <a class="back-hub" href="https://jwahoski04-hub.github.io/eve-tools/" title="Return to Tool Suite" style="margin-left:auto;margin-right:auto;"><span class="back-hub-arrow">◀</span><span>BACK TO HUB</span></a>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
       <button class="btn-sm" onclick="clearCache()">CLEAR CACHE</button>
       <button class="btn-sm" onclick="exportCSV()">EXPORT CSV</button>
     </div>
