@@ -1,0 +1,2112 @@
+<!DOCTYPE html>
+<!--
+  EVE Arbitrage Scanner
+  =====================
+  A standalone, single-file tool for scanning inter-hub and station trading
+  arbitrage opportunities in EVE Online using the public ESI API.
+
+  No installation, server, or authentication required.
+  Open eve_arb_scanner.html directly in any modern browser.
+
+  FEATURES
+  --------
+  - Hub Trading: bulk region fetch across all five major trade hubs
+    (Jita, Amarr, Dodixie, Hek, Rens), cross-hub price comparison,
+    hauling calculator, route matrix filter
+  - Station Trading: bid/ask spread scanner for a single station
+  - IndexedDB cache with ETag/304 validation to minimise ESI requests
+  - Rate limit monitoring and adaptive throttling
+  - Watchlist (persisted in localStorage)
+  - CSV export
+  - Full category filter (20+ categories, legacy aliases included)
+
+  DATA SOURCE
+  -----------
+  All market data is fetched live from the EVE Online ESI public API:
+  https://esi.evetech.net/
+  Only NPC station orders are visible via the public endpoint.
+  Citadel/structure orders require authenticated ESI access (not implemented).
+
+  USAGE
+  -----
+  1. Open eve_arb_scanner.html in Chrome, Firefox, or Edge
+  2. Select the Hub Trading or Station Trading tab
+  3. Configure filters (margin, tax, volume, cargo capacity)
+  4. Click SCAN ALL (Hub Trading) or SCAN (Station Trading)
+  5. Results stream in as opportunities are found
+  6. Click any row to expand price breakdown and hauling details
+  7. Star (☆) any item to add it to your Watchlist
+
+  DISCLAIMER
+  ----------
+  This tool is not affiliated with or endorsed by CCP Games.
+  EVE Online and all related trademarks are the property of CCP hf.
+  Use at your own risk. Market data is live but may be delayed or incomplete.
+
+  LICENSE
+  -------
+  MIT License — free to use, modify, and distribute.
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="description" content="Standalone EVE Online arbitrage scanner — inter-hub and station trading opportunities via live ESI data. No install required." />
+<meta name="keywords" content="EVE Online, arbitrage, market scanner, ESI, Jita, Amarr, hub trading, station trading" />
+<title>EVE Arbitrage Scanner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Exo+2:wght@300;400;600;700&display=swap" rel="stylesheet" />
+<style>
+:root {
+  --bg:#0a0e14;--surface:#0f1520;--surface2:#151d2e;--surface3:#1a2438;
+  --border:rgba(0,200,255,0.12);--border-bright:rgba(0,200,255,0.35);
+  --cyan:#00c8ff;--cyan-dim:rgba(0,200,255,0.10);--cyan-mid:rgba(0,200,255,0.4);
+  --green:#00ff88;--green-dim:rgba(0,255,136,0.10);
+  --amber:#ffb700;--amber-dim:rgba(255,183,0,0.10);
+  --red:#ff4444;--red-dim:rgba(255,68,68,0.10);
+  --purple:#b060ff;--purple-dim:rgba(176,96,255,0.10);
+  --gold:#ffd700;--gold-dim:rgba(255,215,0,0.10);
+  --text:#c8dff0;--text-muted:#5a7a99;--text-dim:#3a5570;
+  --mono:'Share Tech Mono',monospace;--ui:'Exo 2',sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+html,body{background:var(--bg);color:var(--text);font-family:var(--ui);font-size:13px;min-height:100vh;}
+.app{padding:1.5rem;min-height:100vh;}
+
+.header{display:flex;align-items:center;gap:12px;margin-bottom:1.25rem;flex-wrap:wrap;}
+.logo{font-family:var(--mono);font-size:20px;color:var(--cyan);letter-spacing:0.08em;text-shadow:0 0 20px rgba(0,200,255,0.3);}
+.logo small{display:block;font-size:9px;color:var(--text-muted);letter-spacing:0.2em;margin-top:1px;}
+.ver-badge{font-family:var(--mono);font-size:10px;padding:3px 9px;border-radius:2px;background:var(--green-dim);border:1px solid rgba(0,255,136,0.3);color:var(--green);letter-spacing:0.06em;}
+.live-badge{display:flex;align-items:center;gap:5px;font-family:var(--mono);font-size:10px;color:var(--green);border:1px solid rgba(0,255,136,0.25);padding:3px 9px;border-radius:2px;background:var(--green-dim);}
+.live-dot{width:5px;height:5px;border-radius:50%;background:var(--green);animation:blink 1.2s infinite;}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0.3}}
+
+/* RATE LIMIT BAR */
+
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--border);margin-bottom:1.25rem;}
+.tab{font-family:var(--mono);font-size:11px;letter-spacing:0.07em;text-transform:uppercase;
+  padding:7px 16px;cursor:pointer;color:var(--text-muted);border-bottom:2px solid transparent;
+  margin-bottom:-1px;transition:all 0.15s;background:transparent;border-top:none;border-left:none;border-right:none;}
+.tab:hover{color:var(--text);}
+.tab.active{color:var(--cyan);border-bottom-color:var(--cyan);}
+.tab-badge{display:inline-block;font-size:9px;padding:1px 5px;border-radius:10px;margin-left:4px;
+  background:var(--amber-dim);border:1px solid rgba(255,183,0,0.3);color:var(--amber);vertical-align:middle;}
+.copy-btn{display:inline-block;font-size:9px;padding:1px 6px;border-radius:10px;margin-left:5px;
+  background:var(--amber-dim);border:1px solid rgba(255,183,0,0.3);color:var(--amber);
+  cursor:pointer;vertical-align:middle;user-select:none;transition:background 0.15s,color 0.15s;white-space:nowrap;}
+.copy-btn:hover{background:rgba(255,183,0,0.2);border-color:var(--amber);}
+.copy-btn.copied{background:var(--green-dim);border-color:rgba(0,255,136,0.4);color:var(--green);}
+.working-badge{display:none;font-family:var(--mono);font-size:9px;padding:1px 8px;border-radius:10px;
+  background:var(--amber-dim);border:1px solid rgba(255,183,0,0.4);color:var(--amber);
+  vertical-align:middle;user-select:none;animation:workingPulse 1.2s ease-in-out infinite;}
+.working-badge.active{display:inline-block;}
+@keyframes workingPulse{0%,100%{opacity:1}50%{opacity:0.4}}
+.panel{display:none;}.panel.active{display:block;}
+
+.controls-panel{background:var(--surface);border:1px solid var(--border);border-radius:3px;padding:1rem 1.25rem;margin-bottom:1rem;}
+.ctrl-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr)) auto;gap:10px;align-items:end;margin-bottom:1rem;}
+.ctrl{display:flex;flex-direction:column;gap:4px;}
+.ctrl-label{font-family:var(--mono);font-size:9px;color:var(--text-muted);letter-spacing:0.08em;text-transform:uppercase;}
+.ctrl input,.ctrl select{background:var(--bg);border:1px solid var(--border-bright);border-radius:2px;
+  color:var(--text);font-family:var(--mono);font-size:12px;padding:6px 8px;height:32px;outline:none;transition:border-color 0.2s;}
+.ctrl input:focus,.ctrl select:focus{border-color:var(--cyan);}
+.ctrl select option{background:#0f1520;}
+
+.haul-row{background:var(--surface2);border:1px solid var(--border);border-radius:3px;padding:8px 12px;margin-bottom:1.25rem;}
+.haul-header{display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none;margin-bottom:0;}
+.haul-header.open{margin-bottom:10px;}
+.haul-label{font-family:var(--mono);font-size:10px;color:var(--amber);letter-spacing:0.08em;white-space:nowrap;}
+.haul-toggle{font-size:9px;color:var(--amber);opacity:0.6;transition:transform 0.2s;display:inline-block;}
+.haul-toggle.open{transform:rotate(90deg);}
+.haul-stats{display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:10px;align-items:center;}
+.haul-stat{display:flex;flex-direction:column;gap:2px;}
+.haul-stat-label{font-family:var(--mono);font-size:9px;color:var(--text-muted);}
+.haul-stat-val{font-family:var(--mono);font-size:13px;color:var(--amber);}
+
+.hub-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;}
+.hub-label{font-family:var(--mono);font-size:9px;color:var(--text-muted);letter-spacing:0.08em;text-transform:uppercase;margin-right:2px;}
+.hub-check{display:flex;align-items:center;gap:5px;cursor:pointer;font-family:var(--mono);font-size:11px;color:var(--text);
+  padding:4px 10px;border:1px solid var(--border);border-radius:2px;transition:all 0.15s;user-select:none;}
+.hub-check.active{border-color:var(--cyan-mid);color:var(--cyan);background:var(--cyan-dim);}
+.hub-dot{width:5px;height:5px;border-radius:50%;background:var(--text-dim);}
+.hub-check.active .hub-dot{background:var(--cyan);box-shadow:0 0 6px var(--cyan);}
+/* Per-hub active colors — match the route pill colors */
+.hub-check.active.c-jita{border-color:rgba(0,200,255,0.4);color:#7dd4f0;background:rgba(0,200,255,0.07);}
+.hub-check.active.c-jita .hub-dot{background:#7dd4f0;box-shadow:0 0 6px #7dd4f0;}
+.hub-check.active.c-amarr{border-color:rgba(255,183,0,0.4);color:#f0c060;background:rgba(255,183,0,0.07);}
+.hub-check.active.c-amarr .hub-dot{background:#f0c060;box-shadow:0 0 6px #f0c060;}
+.hub-check.active.c-dodixie{border-color:rgba(0,255,136,0.4);color:#60d4a0;background:rgba(0,255,136,0.07);}
+.hub-check.active.c-dodixie .hub-dot{background:#60d4a0;box-shadow:0 0 6px #60d4a0;}
+.hub-check.active.c-hek{border-color:rgba(255,100,100,0.4);color:#f09090;background:rgba(255,100,100,0.07);}
+.hub-check.active.c-hek .hub-dot{background:#f09090;box-shadow:0 0 6px #f09090;}
+.hub-check.active.c-rens{border-color:rgba(180,100,255,0.4);color:#c890f0;background:rgba(180,100,255,0.07);}
+.hub-check.active.c-rens .hub-dot{background:#c890f0;box-shadow:0 0 6px #c890f0;}
+
+.cat-row{display:flex;gap:5px;flex-wrap:wrap;align-items:center;}
+.cat-btn{font-family:var(--mono);font-size:10px;padding:3px 9px;border:1px solid var(--border);border-radius:2px;
+  cursor:pointer;color:var(--text-muted);background:transparent;transition:all 0.15s;user-select:none;}
+.cat-btn:hover{color:var(--text);border-color:var(--border-bright);}
+.cat-btn.active{border-color:var(--amber);color:var(--amber);background:var(--amber-dim);}
+.cat-btn.all-btn.active{border-color:var(--cyan);color:var(--cyan);background:var(--cyan-dim);}
+
+/* Route matrix */
+.route-matrix-wrap{margin-top:10px;}
+.route-matrix-label{font-family:var(--mono);font-size:9px;color:var(--text-muted);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:6px;display:flex;align-items:center;gap:10px;cursor:pointer;user-select:none;}
+.route-matrix-label:hover{color:var(--text-muted);}
+.route-matrix-toggle{font-size:9px;color:var(--text-dim);transition:transform 0.2s;display:inline-block;margin-right:2px;}
+.route-matrix-toggle.open{transform:rotate(90deg);}
+.route-matrix-actions{display:flex;gap:5px;}
+.route-matrix-act{font-family:var(--mono);font-size:9px;padding:2px 7px;border:1px solid var(--border);border-radius:2px;cursor:pointer;color:var(--text-muted);background:transparent;transition:all 0.15s;}
+.route-matrix-act:hover{color:var(--cyan);border-color:var(--cyan);}
+.route-matrix{display:inline-grid;gap:0;border:1px solid var(--border);border-radius:3px;overflow:hidden;}
+.rm-header-cell{font-family:var(--mono);font-size:9px;color:var(--text-muted);padding:5px 8px;background:var(--surface2);text-align:center;letter-spacing:0.06em;border-right:1px solid var(--border);border-bottom:1px solid var(--border);}
+.rm-header-cell.origin-label{text-align:right;min-width:64px;}
+.rm-cell{display:flex;align-items:center;justify-content:center;padding:4px 6px;border-right:1px solid var(--border);border-bottom:1px solid var(--border);background:var(--surface);transition:background 0.15s;}
+.rm-cell.rm-diagonal{background:var(--bg);cursor:default;}
+.rm-cell.rm-checked{background:var(--cyan-dim);}
+.rm-cell:not(.rm-diagonal):hover{background:var(--surface3);cursor:pointer;}
+.rm-cb{accent-color:var(--cyan);width:12px;height:12px;cursor:pointer;}
+.rm-origin-label{font-family:var(--mono);font-size:9px;color:var(--text-muted);padding:4px 8px;background:var(--surface2);border-right:1px solid var(--border);border-bottom:1px solid var(--border);text-align:right;letter-spacing:0.06em;display:flex;align-items:center;justify-content:flex-end;}
+
+.btn-scan{font-family:var(--mono);font-size:12px;font-weight:600;background:transparent;border:1px solid var(--cyan);
+  color:var(--cyan);padding:7px 18px;border-radius:2px;cursor:pointer;letter-spacing:0.08em;text-transform:uppercase;
+  transition:all 0.2s;white-space:nowrap;height:32px;}
+.btn-scan:hover{background:var(--cyan-dim);}
+.btn-scan:disabled{opacity:0.4;cursor:not-allowed;}
+.btn-scan.running{border-color:var(--amber);color:var(--amber);}
+.btn-stop{font-family:var(--mono);font-size:11px;background:transparent;border:1px solid var(--red);
+  color:var(--red);padding:5px 12px;border-radius:2px;cursor:pointer;height:32px;}
+.btn-stop:hover{background:var(--red-dim);}
+.btn-sm{font-family:var(--mono);font-size:10px;background:transparent;border:1px solid var(--border-bright);
+  color:var(--text-muted);padding:3px 9px;border-radius:2px;cursor:pointer;transition:all 0.15s;}
+.btn-sm:hover{color:var(--text);background:var(--surface2);}
+
+.progress-area{margin-bottom:1rem;}
+.progress-bar-wrap{height:3px;background:var(--surface2);border-radius:2px;overflow:hidden;margin-bottom:5px;}
+.progress-bar{height:100%;background:linear-gradient(90deg,var(--cyan),var(--green));border-radius:2px;transition:width 0.3s;width:0%;}
+.progress-info{display:flex;justify-content:space-between;}
+.progress-text{font-family:var(--mono);font-size:10px;color:var(--text-muted);}
+.progress-pct{font-family:var(--mono);font-size:10px;color:var(--cyan);}
+.log-bar{font-family:var(--mono);font-size:10px;color:var(--text-muted);border-left:2px solid var(--border-bright);
+  padding-left:8px;margin-bottom:1rem;height:14px;overflow:hidden;}
+.cursor{animation:blink 0.8s infinite;}
+
+.table-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:8px;}
+.table-title{font-family:var(--mono);font-size:11px;color:var(--cyan);letter-spacing:0.06em;}
+.table-filters{display:flex;gap:6px;align-items:center;flex-wrap:wrap;}
+.tf-select{background:var(--surface);border:1px solid var(--border);color:var(--text-muted);
+  font-family:var(--mono);font-size:10px;padding:3px 7px;border-radius:2px;height:26px;}
+.results-wrap{overflow-x:auto;overflow-y:auto;max-height:520px;border:1px solid var(--border);border-radius:3px;}
+table{width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed;}
+thead{position:sticky;top:0;z-index:2;}
+th{background:var(--surface2);font-family:var(--mono);font-size:9px;letter-spacing:0.08em;text-transform:uppercase;
+  color:var(--text-muted);padding:8px 10px;border-bottom:1px solid var(--border-bright);
+  text-align:left;white-space:nowrap;cursor:pointer;user-select:none;}
+th:hover{color:var(--cyan);}
+th.sorted{color:var(--cyan);}
+td{padding:7px 10px;border-bottom:1px solid rgba(0,200,255,0.04);font-family:var(--mono);font-size:11px;color:var(--text);white-space:nowrap;}
+td:nth-child(2){white-space:normal;}
+tr:hover td{background:rgba(0,200,255,0.03);}
+tr.new-opp td{animation:flashNew 2s ease-out forwards;}
+@keyframes flashNew{0%{background:rgba(0,255,136,0.15)}100%{background:transparent}}
+tr.top-row td{background:rgba(255,215,0,0.04);}
+tr.expanded-row td{background:var(--surface2);padding:0;border-bottom:2px solid var(--border-bright);}
+
+.item-name{font-family:var(--ui);font-size:12px;color:var(--text);white-space:normal;word-break:break-word;}
+.hub-pill{font-size:9px;padding:2px 6px;border-radius:1px;border:1px solid var(--border);}
+.hub-jita{border-color:rgba(0,200,255,0.4);color:#7dd4f0;}
+.hub-amarr{border-color:rgba(255,183,0,0.4);color:#f0c060;}
+.hub-dodixie{border-color:rgba(0,255,136,0.4);color:#60d4a0;}
+.hub-hek{border-color:rgba(255,100,100,0.4);color:#f09090;}
+.hub-rens{border-color:rgba(180,100,255,0.4);color:#c890f0;}
+.arrow{color:var(--text-dim);margin:0 3px;}
+.pct-high{color:var(--green);font-weight:600;}
+.pct-mid{color:var(--amber);}
+.pct-low{color:var(--text-muted);}
+.profit-val{color:var(--green);}
+.depth-bar{display:inline-block;height:6px;border-radius:2px;background:var(--cyan-dim);border:1px solid var(--cyan-mid);vertical-align:middle;margin-right:4px;}
+.watchstar{cursor:pointer;font-size:13px;user-select:none;transition:transform 0.15s;}
+.watchstar:hover{transform:scale(1.3);}
+.sort-arrow{font-size:8px;margin-left:2px;}
+
+/* Score tooltip */
+.th-score-wrap{position:relative;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;}
+.score-info{display:inline-block;font-size:9px;color:var(--cyan);cursor:default;border:1px solid var(--border-bright);border-radius:50%;width:13px;height:13px;text-align:center;line-height:12px;font-family:var(--mono);}
+.score-info:hover + .score-tip, .score-tip:hover{display:block;}
+.score-tip{display:none;position:absolute;top:calc(100% + 6px);right:0;width:240px;white-space:normal;word-break:break-word;background:var(--surface3);border:1px solid var(--border-bright);border-radius:3px;padding:8px 10px;z-index:10;pointer-events:none;}
+.score-tip-title{font-family:var(--mono);font-size:9px;color:var(--cyan);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:5px;white-space:normal;}
+.score-tip-formula{font-family:var(--mono);font-size:10px;color:var(--amber);margin-bottom:5px;padding:4px 6px;background:var(--bg);border-radius:2px;border:1px solid var(--border);white-space:normal;word-break:break-all;}
+.score-tip-body{font-family:var(--mono);font-size:10px;color:var(--text-muted);line-height:1.6;white-space:normal;}
+
+/* Depth tooltip — same structure as score */
+.th-depth-wrap{position:relative;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;}
+.depth-info{display:inline-block;font-size:9px;color:var(--cyan);cursor:default;border:1px solid var(--border-bright);border-radius:50%;width:13px;height:13px;text-align:center;line-height:12px;font-family:var(--mono);}
+.depth-info:hover + .depth-tip, .depth-tip:hover{display:block;}
+.depth-tip{display:none;position:absolute;top:calc(100% + 6px);right:0;width:240px;white-space:normal;word-break:break-word;background:var(--surface3);border:1px solid var(--border-bright);border-radius:3px;padding:8px 10px;z-index:10;pointer-events:none;}
+.depth-tip-title{font-family:var(--mono);font-size:9px;color:var(--cyan);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:5px;white-space:normal;}
+.depth-tip-body{font-family:var(--mono);font-size:10px;color:var(--text-muted);line-height:1.6;white-space:normal;}
+
+.detail-panel{padding:8px 12px;display:grid;grid-template-columns:repeat(3,minmax(0,220px));gap:6px 16px;border-top:1px solid var(--border);}
+.detail-section{display:flex;flex-direction:column;gap:2px;}
+.detail-title{font-family:var(--mono);font-size:9px;color:var(--text-muted);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:3px;border-bottom:1px solid var(--border);padding-bottom:3px;}
+.detail-row{display:flex;justify-content:space-between;font-family:var(--mono);font-size:10px;gap:8px;}
+.detail-key{color:var(--text-muted);white-space:nowrap;}
+.detail-val{color:var(--text);text-align:right;white-space:nowrap;}
+.detail-val.green{color:var(--green);}
+.detail-val.amber{color:var(--amber);}
+.detail-val.gold{color:var(--gold);}
+
+.watchlist-empty{text-align:center;padding:2rem;font-family:var(--mono);font-size:11px;color:var(--text-dim);line-height:2;}
+.wl-item{background:var(--surface);border:1px solid var(--border);border-radius:3px;padding:10px 14px;
+  display:flex;align-items:center;gap:12px;margin-bottom:6px;}
+.wl-item:hover{border-color:var(--border-bright);}
+.wl-name{font-family:var(--ui);font-size:13px;flex:1;}
+.wl-meta{font-family:var(--mono);font-size:10px;color:var(--text-muted);}
+.wl-profit{font-family:var(--mono);font-size:13px;color:var(--green);}
+.wl-margin{font-family:var(--mono);font-size:11px;}
+
+/* STATION TRADING */
+.st-controls{background:var(--surface);border:1px solid var(--border);border-radius:3px;padding:1rem 1.25rem;margin-bottom:1rem;}
+.st-ctrl-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr)) auto;gap:10px;align-items:end;margin-bottom:1rem;}
+.st-hub-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px;}
+.spread-high{color:var(--green);font-weight:600;}
+.spread-mid{color:var(--amber);}
+.spread-low{color:var(--text-muted);}
+.compete-bar{display:inline-block;height:6px;border-radius:2px;background:var(--red-dim);border:1px solid rgba(255,68,68,0.4);vertical-align:middle;margin-right:4px;}
+
+.cache-panel{background:var(--surface);border:1px solid var(--border);border-radius:3px;padding:1rem 1.25rem;}
+.cache-title{font-family:var(--mono);font-size:11px;color:var(--cyan);letter-spacing:0.06em;margin-bottom:1rem;}
+.cache-stats-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:1rem;}
+.cache-entry{background:var(--surface2);border:1px solid var(--border);padding:8px 10px;border-radius:2px;}
+.cache-entry-key{font-family:var(--mono);font-size:9px;color:var(--text-muted);margin-bottom:3px;}
+.cache-entry-val{font-family:var(--mono);font-size:13px;color:var(--cyan);}
+.cache-table-wrap{overflow-x:auto;max-height:300px;overflow-y:auto;}
+.cache-table{width:100%;border-collapse:collapse;font-size:11px;}
+.cache-table th{background:var(--surface2);font-family:var(--mono);font-size:9px;color:var(--text-muted);
+  padding:6px 10px;border-bottom:1px solid var(--border-bright);text-align:left;text-transform:uppercase;letter-spacing:0.06em;}
+.cache-table td{padding:6px 10px;border-bottom:1px solid rgba(0,200,255,0.04);font-family:var(--mono);font-size:10px;color:var(--text);}
+.cache-table tr:hover td{background:rgba(0,200,255,0.03);}
+.expires-ok{color:var(--green);}
+.expires-stale{color:var(--red);}
+.expires-soon{color:var(--amber);}
+
+.footer{margin-top:1rem;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;
+  border-top:1px solid var(--border);padding-top:10px;}
+.footer-text{font-family:var(--mono);font-size:10px;color:var(--text-dim);}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <div class="header">
+    <div class="logo">ARB SCANNER<small>EVE MARKET INTELLIGENCE</small></div>
+    <div class="live-badge"><div class="live-dot"></div>ESI LIVE</div>
+    <div style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;">
+      <button class="btn-sm" onclick="clearCache()">CLEAR CACHE</button>
+      <button class="btn-sm" onclick="exportCSV()">EXPORT CSV</button>
+    </div>
+  </div>
+
+  <!-- Rate limit elements kept hidden — logic runs in background -->
+  <div style="display:none">
+    <div id="rateFill"></div><div id="errFill"></div>
+    <span id="rateVal"></span><span id="errVal"></span>
+    <span id="throttleBadge"></span>
+    <span id="statHit"></span><span id="statMiss"></span><span id="stat304"></span>
+    <span id="cacheAge"></span>
+  </div>
+
+  <div class="tabs">
+    <button class="tab active" onclick="showTab('results',this)">HUB TRADING <span class="tab-badge" id="tab-results-count"></span></button>
+    <button class="tab" onclick="showTab('station',this)">STATION TRADING <span class="tab-badge" id="tab-st-count"></span></button>
+    <button class="tab" onclick="showTab('watchlist',this)">WATCHLIST <span class="tab-badge" id="tab-wl-count">0</span></button>
+    <button class="tab" onclick="showTab('cache',this)">CACHE <span class="tab-badge" id="tab-cache-count">0</span></button>
+  </div>
+
+  <div class="panel active" id="panel-results">
+
+    <div class="controls-panel">
+      <div class="ctrl-grid" style="grid-template-columns:repeat(10,minmax(0,1fr)) auto;">
+        <div class="ctrl"><div class="ctrl-label">Min Margin %</div><input type="number" id="minMargin" value="5" min="0" max="100" step="0.5" /></div>
+        <div class="ctrl"><div class="ctrl-label">Tax % (broker+tx)</div><input type="number" id="taxRate" value="3.6" min="0" max="15" step="0.1" /></div>
+        <div class="ctrl"><div class="ctrl-label">Min Daily Vol</div><input type="number" id="minVol" value="10" min="0" /></div>
+        <div class="ctrl"><div class="ctrl-label">Min Profit ISK</div><input type="number" id="minProfit" value="100000" step="50000" /></div>
+        <div class="ctrl"><div class="ctrl-label">Cargo (m³)</div><input type="number" id="cargoM3" value="10000" min="1" step="500" onchange="recalcHaul()" /></div>
+        <div class="ctrl"><div class="ctrl-label">Throttle floor</div>
+          <select id="throttleFloor"><option value="20">20 — Aggressive</option><option value="40" selected>40 — Normal</option><option value="60">60 — Conservative</option></select>
+        </div>
+        <div class="ctrl"><div class="ctrl-label">Min Sell Orders</div>
+          <select id="minSellOrders">
+            <option value="1">1 — Any</option>
+            <option value="3" selected>3 — Default</option>
+            <option value="5">5 — Active</option>
+            <option value="10">10 — Liquid</option>
+          </select>
+        </div>
+        <div class="ctrl"><div class="ctrl-label">Max Price ×Avg</div>
+          <select id="maxPriceMult">
+            <option value="0">Off</option>
+            <option value="2">2× avg</option>
+            <option value="3" selected>3× avg</option>
+            <option value="5">5× avg</option>
+            <option value="10">10× avg</option>
+          </select>
+        </div>
+        <div class="ctrl"><div class="ctrl-label">Sort By</div>
+          <select id="sortBy"><option value="margin">Margin %</option><option value="profit">Profit/Unit</option><option value="tripProfit">Trip Profit</option><option value="volume">Volume</option><option value="score">Score</option></select>
+        </div>
+        <div class="ctrl"><div class="ctrl-label">Vol Period</div>
+          <select id="volPeriod">
+            <option value="1">1 Day</option>
+            <option value="7" selected>7 Days</option>
+            <option value="30">30 Days</option>
+          </select>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:5px;">
+          <button class="btn-scan" id="scanBtn" onclick="toggleScan()">▶ SCAN ALL</button>
+          <button class="btn-stop" id="stopBtn" onclick="stopScan()" style="display:none">■ STOP</button>
+        </div>
+      </div>
+
+      <div class="haul-row">
+        <div class="haul-header" id="haulHeader" onclick="toggleHaulCalc()">
+          <span class="haul-toggle" id="haulToggle">▶</span>
+          <div class="haul-label">⬡ HAUL CALCULATOR</div>
+        </div>
+        <div id="haulBody" style="display:none">
+          <div class="haul-stats">
+            <div class="haul-stat"><div class="haul-stat-label">CARGO CAP</div><div class="haul-stat-val" id="h-cargo">10,000 m³</div></div>
+            <div class="haul-stat"><div class="haul-stat-label">BEST ITEM m³</div><div class="haul-stat-val" id="h-vol">—</div></div>
+            <div class="haul-stat"><div class="haul-stat-label">MAX UNITS</div><div class="haul-stat-val" id="h-units">—</div></div>
+            <div class="haul-stat"><div class="haul-stat-label">TRIP PROFIT</div><div class="haul-stat-val" id="h-trip">—</div></div>
+            <div class="haul-stat"><div class="haul-stat-label">ISK / m³</div><div class="haul-stat-val" id="h-iskm3">—</div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="hub-row">
+        <span class="hub-label">Hubs:</span>
+        <label class="hub-check active c-jita" id="hub-10000002" onclick="toggleHub('10000002',this)"><input type="checkbox" value="10000002" checked /><div class="hub-dot"></div>JITA</label>
+        <label class="hub-check active c-amarr" id="hub-10000043" onclick="toggleHub('10000043',this)"><input type="checkbox" value="10000043" checked /><div class="hub-dot"></div>AMARR</label>
+        <label class="hub-check active c-dodixie" id="hub-10000032" onclick="toggleHub('10000032',this)"><input type="checkbox" value="10000032" checked /><div class="hub-dot"></div>DODIXIE</label>
+        <label class="hub-check active c-hek" id="hub-10000042" onclick="toggleHub('10000042',this)"><input type="checkbox" value="10000042" checked /><div class="hub-dot"></div>HEK</label>
+        <label class="hub-check active c-rens" id="hub-10000030" onclick="toggleHub('10000030',this)"><input type="checkbox" value="10000030" checked /><div class="hub-dot"></div>RENS</label>
+      </div>
+
+      <div class="cat-row" style="margin-top:8px;">
+        <span class="hub-label">Categories:</span>
+        <button class="cat-btn all-btn active" data-cat="all" onclick="toggleCat(this)">ALL</button>
+        <button class="cat-btn" data-cat="4"    onclick="toggleCat(this)">MATERIALS</button>
+        <button class="cat-btn" data-cat="25"   onclick="toggleCat(this)">ASTEROID</button>
+        <button class="cat-btn" data-cat="8"    onclick="toggleCat(this)">CHARGES</button>
+        <button class="cat-btn" data-cat="7"    onclick="toggleCat(this)">MODULES</button>
+        <button class="cat-btn" data-cat="157"  onclick="toggleCat(this)">RIGS</button>
+        <button class="cat-btn" data-cat="18"   onclick="toggleCat(this)">DRONES</button>
+        <button class="cat-btn" data-cat="87"   onclick="toggleCat(this)">FIGHTERS</button>
+        <button class="cat-btn" data-cat="11"   onclick="toggleCat(this)">IMPLANTS</button>
+        <button class="cat-btn" data-cat="16"   onclick="toggleCat(this)">SKILLS</button>
+        <button class="cat-btn" data-cat="17"   onclick="toggleCat(this)">COMMODITY</button>
+        <button class="cat-btn" data-cat="9"    onclick="toggleCat(this)">BLUEPRINTS</button>
+        <button class="cat-btn" data-cat="35"   onclick="toggleCat(this)">DECRYPTORS</button>
+        <button class="cat-btn" data-cat="22"   onclick="toggleCat(this)">DEPLOYABLE</button>
+        <button class="cat-btn" data-cat="32"   onclick="toggleCat(this)">SUBSYSTEMS</button>
+        <button class="cat-btn" data-cat="ships" onclick="toggleCat(this)">SHIPS</button>
+        <button class="cat-btn" data-cat="23"   onclick="toggleCat(this)">STRUCTURES</button>
+        <button class="cat-btn" data-cat="34"   onclick="toggleCat(this)">STR. MODULES</button>
+        <button class="cat-btn" data-cat="91"   onclick="toggleCat(this)">SKINS</button>
+        <button class="cat-btn" data-cat="2100" onclick="toggleCat(this)">EXPERT SYS.</button>
+        <button class="cat-btn" data-cat="30"   onclick="toggleCat(this)">APPAREL</button>
+      </div>
+    </div>
+
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+      <span class="working-badge" id="workingBadge">⬡ WORKING</span>
+    </div>
+    <div class="progress-area">
+      <div class="progress-bar-wrap"><div class="progress-bar" id="progressBar"></div></div>
+      <div class="progress-info">
+        <div class="progress-text" id="progressText">Select hubs and click SCAN ALL — bulk region fetch active</div>
+        <div class="progress-pct" id="progressPct"></div>
+      </div>
+    </div>
+    <div class="log-bar" id="logBar">&gt; AWAITING SCAN COMMAND<span class="cursor">_</span></div>
+
+    <div class="table-header">
+      <div class="table-title">HUB TRADING OPPORTUNITIES <span style="color:var(--text-dim)" id="resultCount"></span></div>
+      <div class="table-filters">
+        <button class="btn-sm" onclick="toggleNewOnly()" id="newOnlyBtn">NEW ONLY</button>
+      </div>
+    </div>
+
+    <!-- Route filter matrix — post-scan filter only, does not affect what gets scanned -->
+    <div class="route-matrix-wrap">
+      <div class="route-matrix-label" onclick="toggleRouteMatrix()">
+        <span class="route-matrix-toggle" id="routeMatrixToggle">▶</span>
+        FILTER BY ROUTE
+        <div class="route-matrix-actions" onclick="event.stopPropagation()">
+          <button class="route-matrix-act" onclick="setAllRoutes(true)">ALL</button>
+          <button class="route-matrix-act" onclick="setAllRoutes(false)">NONE</button>
+          <button class="route-matrix-act" onclick="setSymmetricRoutes()">SYMMETRIC</button>
+        </div>
+      </div>
+      <div id="routeMatrixBody" style="display:none">
+        <div class="route-matrix" id="routeMatrix" style="grid-template-columns: 64px repeat(5, 52px);">
+          <!-- Built by JS -->
+        </div>
+      </div>
+    </div>
+    <div class="results-wrap">
+      <table id="resultsTable">
+        <thead><tr>
+          <th style="width:28px"></th>
+          <th style="width:18%" onclick="sortTable('name')">Item <span class="sort-arrow" id="sort-name"></span></th>
+          <th style="width:7%" onclick="sortTable('category')">Category <span class="sort-arrow" id="sort-category"></span></th>
+          <th style="width:14%" onclick="sortTable('route')">Route <span class="sort-arrow" id="sort-route"></span></th>
+          <th style="width:8%" onclick="sortTable('buyPrice')">Buy Price <span class="sort-arrow" id="sort-buyPrice"></span></th>
+          <th style="width:8%" onclick="sortTable('sellPrice')">Sell Price <span class="sort-arrow" id="sort-sellPrice"></span></th>
+          <th style="width:7%" onclick="sortTable('margin')" class="sorted">Margin % <span class="sort-arrow" id="sort-margin">▼</span></th>
+          <th style="width:9%" onclick="sortTable('profit')">Profit/Unit <span class="sort-arrow" id="sort-profit"></span></th>
+          <th style="width:10%" onclick="sortTable('depth')"><span class="th-depth-wrap">Depth <span class="sort-arrow" id="sort-depth"></span><span class="depth-info">i</span><div class="depth-tip"><div class="depth-tip-title">Order Depth</div><div class="depth-tip-body">Total units available at the buy hub's main station across all sell orders. This is how many units you can actually buy at the listed price. Compare against your cargo capacity to estimate how many trips are needed to clear the opportunity.</div></div></span></th>
+          <th style="width:9%" onclick="sortTable('tripProfit')">Trip Profit <span class="sort-arrow" id="sort-tripProfit"></span></th>
+          <th style="width:8%" onclick="sortTable('volume')"><span id="volColHeader">7d</span> Avg Vol <span class="sort-arrow" id="sort-volume"></span></th>
+          <th style="width:7%" onclick="sortTable('score')"><span class="th-score-wrap">Score <span class="sort-arrow" id="sort-score"></span><span class="score-info">i</span><div class="score-tip"><div class="score-tip-title">Opportunity Score</div><div class="score-tip-formula">log₁₀(avg vol) × margin% × 100</div><div class="score-tip-body">Combines liquidity and profitability into one number. High score = high volume AND high margin. Use this to rank the best all-around hauls.</div></div></span></th>
+          <th style="width:4%"></th>
+        </tr></thead>
+        <tbody id="resultsBody">
+          <tr><td colspan="13"><div style="text-align:center;padding:3rem;font-family:var(--mono);font-size:11px;color:var(--text-dim);">v1.2.0: Bulk region fetch — all orders pulled in one pass per hub<br>Click SCAN ALL to begin</div></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="panel" id="panel-station">
+    <div class="st-controls">
+      <div class="st-ctrl-grid">
+        <div class="ctrl"><div class="ctrl-label">Min ROI %</div><input type="number" id="st-minSpread" value="2" min="0" max="100" step="0.5" /></div>
+        <div class="ctrl"><div class="ctrl-label">Tax % (broker+tx)</div><input type="number" id="st-taxRate" value="3.6" min="0" max="15" step="0.1" /></div>
+        <div class="ctrl"><div class="ctrl-label">Min Daily Vol</div><input type="number" id="st-minVol" value="5" min="0" /></div>
+        <div class="ctrl"><div class="ctrl-label">Min Profit ISK</div><input type="number" id="st-minProfit" value="50000" step="50000" /></div>
+        <div class="ctrl"><div class="ctrl-label">Min Buy Orders</div>
+          <select id="st-minBuyOrders">
+            <option value="1" selected>≥ 1 — Any</option>
+            <option value="3">≥ 3</option>
+            <option value="5">≥ 5</option>
+          </select>
+        </div>
+        <div class="ctrl"><div class="ctrl-label">Vol Period</div>
+          <select id="st-volPeriod">
+            <option value="1">1 Day</option>
+            <option value="7" selected>7 Days</option>
+            <option value="30">30 Days</option>
+          </select>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:5px;">
+          <button class="btn-scan" id="stScanBtn" onclick="toggleStationScan()">▶ SCAN</button>
+          <button class="btn-stop" id="stStopBtn" onclick="stopStationScan()" style="display:none">■ STOP</button>
+        </div>
+      </div>
+      <div class="st-hub-row">
+        <span class="hub-label">Station:</span>
+        <label class="hub-check active c-jita" id="st-hub-10000002" onclick="stToggleHub('10000002',this)"><input type="radio" name="stHub" value="10000002" checked /><div class="hub-dot"></div>JITA</label>
+        <label class="hub-check c-amarr" id="st-hub-10000043" onclick="stToggleHub('10000043',this)"><input type="radio" name="stHub" value="10000043" /><div class="hub-dot"></div>AMARR</label>
+        <label class="hub-check c-dodixie" id="st-hub-10000032" onclick="stToggleHub('10000032',this)"><input type="radio" name="stHub" value="10000032" /><div class="hub-dot"></div>DODIXIE</label>
+        <label class="hub-check c-hek" id="st-hub-10000042" onclick="stToggleHub('10000042',this)"><input type="radio" name="stHub" value="10000042" /><div class="hub-dot"></div>HEK</label>
+        <label class="hub-check c-rens" id="st-hub-10000030" onclick="stToggleHub('10000030',this)"><input type="radio" name="stHub" value="10000030" /><div class="hub-dot"></div>RENS</label>
+      </div>
+      <div class="cat-row" style="margin-top:8px;">
+        <span class="hub-label">Categories:</span>
+        <button class="cat-btn all-btn active" data-st-cat="all"   onclick="stToggleCat(this)">ALL</button>
+        <button class="cat-btn" data-st-cat="4"    onclick="stToggleCat(this)">MATERIALS</button>
+        <button class="cat-btn" data-st-cat="25"   onclick="stToggleCat(this)">ASTEROID</button>
+        <button class="cat-btn" data-st-cat="8"    onclick="stToggleCat(this)">CHARGES</button>
+        <button class="cat-btn" data-st-cat="7"    onclick="stToggleCat(this)">MODULES</button>
+        <button class="cat-btn" data-st-cat="157"  onclick="stToggleCat(this)">RIGS</button>
+        <button class="cat-btn" data-st-cat="18"   onclick="stToggleCat(this)">DRONES</button>
+        <button class="cat-btn" data-st-cat="87"   onclick="stToggleCat(this)">FIGHTERS</button>
+        <button class="cat-btn" data-st-cat="11"   onclick="stToggleCat(this)">IMPLANTS</button>
+        <button class="cat-btn" data-st-cat="16"   onclick="stToggleCat(this)">SKILLS</button>
+        <button class="cat-btn" data-st-cat="17"   onclick="stToggleCat(this)">COMMODITY</button>
+        <button class="cat-btn" data-st-cat="9"    onclick="stToggleCat(this)">BLUEPRINTS</button>
+        <button class="cat-btn" data-st-cat="35"   onclick="stToggleCat(this)">DECRYPTORS</button>
+        <button class="cat-btn" data-st-cat="22"   onclick="stToggleCat(this)">DEPLOYABLE</button>
+        <button class="cat-btn" data-st-cat="32"   onclick="stToggleCat(this)">SUBSYSTEMS</button>
+        <button class="cat-btn" data-st-cat="ships" onclick="stToggleCat(this)">SHIPS</button>
+        <button class="cat-btn" data-st-cat="23"   onclick="stToggleCat(this)">STRUCTURES</button>
+        <button class="cat-btn" data-st-cat="34"   onclick="stToggleCat(this)">STR. MODULES</button>
+        <button class="cat-btn" data-st-cat="91"   onclick="stToggleCat(this)">SKINS</button>
+        <button class="cat-btn" data-st-cat="2100" onclick="stToggleCat(this)">EXPERT SYS.</button>
+        <button class="cat-btn" data-st-cat="30"   onclick="stToggleCat(this)">APPAREL</button>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+      <span class="working-badge" id="stWorkingBadge">⬡ WORKING</span>
+    </div>
+    <div class="progress-area" id="st-progress-area" style="display:none">
+      <div class="progress-bar-wrap"><div class="progress-bar" id="stProgressBar"></div></div>
+      <div class="progress-info">
+        <div class="progress-text" id="stProgressText"></div>
+        <div class="progress-pct" id="stProgressPct"></div>
+      </div>
+    </div>
+    <div class="log-bar" id="stLogBar" style="margin-bottom:1rem">&gt; SELECT A STATION AND CLICK SCAN<span class="cursor">_</span></div>
+    <div class="table-header">
+      <div class="table-title">STATION TRADE OPPORTUNITIES <span style="color:var(--text-dim)" id="stResultCount"></span></div>
+      <div class="table-filters">
+        <button class="btn-sm" onclick="exportStationCSV()">EXPORT CSV</button>
+      </div>
+    </div>
+    <div class="results-wrap">
+      <table id="stTable">
+        <thead><tr>
+          <th onclick="sortStTable('name')">Item <span class="sort-arrow" id="st-sort-name"></span></th>
+          <th onclick="sortStTable('category')">Category <span class="sort-arrow" id="st-sort-category"></span></th>
+          <th onclick="sortStTable('buyNow')">Buy Order At <span class="sort-arrow" id="st-sort-buyNow"></span></th>
+          <th onclick="sortStTable('sellNow')">Sell Order At <span class="sort-arrow" id="st-sort-sellNow"></span></th>
+          <th onclick="sortStTable('roi')" class="sorted">ROI % <span class="sort-arrow" id="st-sort-roi">▼</span></th>
+          <th onclick="sortStTable('profitPerUnit')">Profit/Unit <span class="sort-arrow" id="st-sort-profitPerUnit"></span></th>
+          <th onclick="sortStTable('sellOrders')">Sell Orders <span class="sort-arrow" id="st-sort-sellOrders"></span></th>
+          <th onclick="sortStTable('buyOrders')">Buy Orders <span class="sort-arrow" id="st-sort-buyOrders"></span></th>
+          <th onclick="sortStTable('volume')">Avg Vol <span class="sort-arrow" id="st-sort-volume"></span></th>
+          <th onclick="sortStTable('score')">Score <span class="sort-arrow" id="st-sort-score"></span></th>
+          <th></th>
+        </tr></thead>
+        <tbody id="stBody">
+          <tr><td colspan="11"><div style="text-align:center;padding:3rem;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Select a station and click SCAN<br><br>Place a buy order at the <span style="color:var(--cyan)">Buy Order At</span> price · wait to fill · list sell at <span style="color:var(--green)">Sell Order At</span> − 0.01 ISK<br>ROI % = net profit after tax as % of your buy-in cost</div></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="panel" id="panel-watchlist">
+    <div id="watchlistContent"></div>
+  </div>
+
+  <div class="panel" id="panel-cache">
+    <div class="cache-panel">
+      <div class="cache-title">INDEXEDDB CACHE INSPECTOR</div>
+      <div class="cache-stats-grid">
+        <div class="cache-entry"><div class="cache-entry-key">TOTAL ENTRIES</div><div class="cache-entry-val" id="ci-total">—</div></div>
+        <div class="cache-entry"><div class="cache-entry-key">CACHE HITS (SESSION)</div><div class="cache-entry-val" id="ci-hits">—</div></div>
+        <div class="cache-entry"><div class="cache-entry-key">304 NOT MODIFIED</div><div class="cache-entry-val" id="ci-304">—</div></div>
+        <div class="cache-entry"><div class="cache-entry-key">EST. BYTES SAVED</div><div class="cache-entry-val" id="ci-saved">—</div></div>
+      </div>
+      <div class="cache-table-wrap">
+        <table class="cache-table">
+          <thead><tr><th>Cache Key</th><th>Expires</th><th>ETag</th><th>Size</th><th>Hits</th></tr></thead>
+          <tbody id="cacheTableBody"><tr><td colspan="5" style="text-align:center;color:var(--text-dim);padding:1rem;">No cache entries yet</td></tr></tbody>
+        </table>
+      </div>
+      <div style="margin-top:10px;display:flex;gap:8px;">
+        <button class="btn-sm" onclick="refreshCacheView()">REFRESH VIEW</button>
+        <button class="btn-sm" style="border-color:rgba(255,68,68,0.4);color:var(--red);" onclick="clearCache()">CLEAR ALL CACHE</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <div class="footer-text">EVE ARBITRAGE SCANNER · HUB TRADING · STATION TRADING · NPC STATIONS ONLY · DATA: EVE ESI PUBLIC API</div>
+    <div class="footer-text" id="lastScan">LAST SCAN: —</div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// CONSTANTS
+// ============================================================
+const HUBS = {
+  '10000002':{name:'Jita',    stationName:'Jita IV - Moon 4 - Caldari Navy Assembly Plant',    station:60003760, system:30000142, cls:'hub-jita'},
+  '10000043':{name:'Amarr',   stationName:'Amarr VIII (Oris) - Emperor Family Academy',         station:60008494, system:30002187, cls:'hub-amarr'},
+  '10000032':{name:'Dodixie', stationName:'Dodixie IX - Moon 20 - Federation Navy Assembly Plant', station:60011866, system:30002659, cls:'hub-dodixie'},
+  '10000042':{name:'Hek',     stationName:'Hek VIII - Moon 12 - Boundless Creation Factory',   station:60005686, system:30002053, cls:'hub-hek'},
+  '10000030':{name:'Rens',    stationName:'Rens VI - Moon 8 - Brutor Tribe Treasury',           station:60004588, system:30002510, cls:'hub-rens'},
+};
+
+// Packaged volumes (m³) for common item categories from SDE — eliminates universe/types calls for known items.
+// Keyed by typeId. Populated progressively via batch name resolution which also returns packaged_volume.
+const SDE_VOL_CACHE = {};
+
+// typeId → ESI category_id. Populated during batchResolveNames.
+// Used to enforce category filter selection accurately.
+const TYPE_CAT_CACHE = {};
+
+// Maps category button data-cat values → ESI category_id numbers.
+// 'ships' is a pseudo-category that maps to ESI category 6.
+// 'all' bypasses the filter entirely.
+const CAT_ID_MAP = {
+  'all':         null,
+  '4':           4,    // Material
+  '6':           6,    // Ship  (used by 'ships' key below — kept for completeness)
+  '7':           7,    // Module
+  '8':           8,    // Charge
+  '9':           9,    // Blueprint
+  '11':          11,   // Implant (current)
+  '16':          16,   // Skill
+  '17':          17,   // Commodity
+  '18':          18,   // Drone
+  '20':          20,   // Implant (legacy alias — boosters)
+  '22':          22,   // Deployable
+  '23':          23,   // Structure
+  '25':          25,   // Asteroid (ores)
+  '30':          30,   // Apparel
+  '32':          32,   // Subsystem
+  '34':          34,   // Structure Module
+  '35':          35,   // Decryptor
+  '87':          87,   // Fighter (carrier-launched)
+  '91':          91,   // SKIN
+  '157':         157,  // Rig
+  '2100':        2100, // Expert Systems
+  'ships':       6,    // Ship button (ESI cat 6)
+};
+
+// ESI category_id → short display label for the Category column
+const CAT_LABEL_MAP = {
+  4:    'Material',
+  5:    'Accessory',   // dog tags, identification tags
+  6:    'Ship',
+  7:    'Module',
+  8:    'Charge',
+  9:    'Blueprint',
+  11:   'Implant',
+  16:   'Skill',
+  17:   'Commodity',
+  18:   'Drone',
+  20:   'Implant',     // legacy alias → boosters + old implant classification
+  22:   'Deployable',
+  23:   'Structure',
+  25:   'Asteroid',    // all raw and compressed ores
+  30:   'Apparel',
+  32:   'Subsystem',
+  34:   'Str. Module',
+  35:   'Decryptor',   // invention decryptors
+  40:   'Sov. Struct', // sovereignty structures (TCU, SBU etc.)
+  41:   'PI Resource',
+  42:   'Orbital',
+  43:   'PI Industry',
+  65:   'Reaction',
+  87:   'Fighter',     // carrier-launched fighters (Locust I etc.)
+  91:   'SKIN',        // ship SKINs
+  157:  'Rig',
+  2100: 'Expert Sys.', // temporary skill bundles
+};
+function catLabel(categoryId) {
+  return CAT_LABEL_MAP[categoryId] || (categoryId != null ? `Cat ${categoryId}` : '—');
+}
+
+// Shared category filter
+function applyCatFilter(results, cats) {
+  if (cats.has('all')) return results;
+  const allowedCatIds = new Set();
+  cats.forEach(cat => {
+    const id = CAT_ID_MAP[cat];
+    if (id != null) {
+      allowedCatIds.add(id);
+      // IMPLANTS button (cat '11') also covers legacy cat 20
+      if (id === 11) allowedCatIds.add(20);
+    }
+  });
+  return results.filter(r => r.categoryId != null && allowedCatIds.has(r.categoryId));
+}
+
+// group_id → category_id cache. Populated lazily via /universe/groups/{id}/.
+// ESI /universe/types/{id}/ returns group_id but not category_id directly.
+const GROUP_CAT_CACHE = {};
+
+// ============================================================
+// INDEXEDDB CACHE LAYER
+// ============================================================
+const DB_NAME = 'eve-arb-cache-v2';
+const DB_VER  = 2;
+const STORE   = 'responses';
+let db = null;
+
+function openDB() {
+  return new Promise((res, rej) => {
+    const req = indexedDB.open(DB_NAME, DB_VER);
+    req.onupgradeneeded = e => {
+      const d = e.target.result;
+      if (!d.objectStoreNames.contains(STORE)) {
+        const s = d.createObjectStore(STORE, { keyPath: 'cacheKey' });
+        s.createIndex('expires', 'expires');
+      }
+    };
+    req.onsuccess = e => { db = e.target.result; res(db); };
+    req.onerror   = e => { console.warn('IDB open failed', e); res(null); };
+  });
+}
+
+async function dbGet(key) {
+  if (!db) return null;
+  return new Promise(res => {
+    const tx = db.transaction(STORE, 'readonly');
+    const req = tx.objectStore(STORE).get(key);
+    req.onsuccess = () => res(req.result || null);
+    req.onerror   = () => res(null);
+  });
+}
+
+async function dbPut(entry) {
+  if (!db) return;
+  return new Promise(res => {
+    const tx = db.transaction(STORE, 'readwrite');
+    tx.objectStore(STORE).put(entry);
+    tx.oncomplete = () => res();
+    tx.onerror    = () => res();
+  });
+}
+
+async function dbGetAll() {
+  if (!db) return [];
+  return new Promise(res => {
+    const tx = db.transaction(STORE, 'readonly');
+    const req = tx.objectStore(STORE).getAll();
+    req.onsuccess = () => res(req.result || []);
+    req.onerror   = () => res([]);
+  });
+}
+
+async function dbClear() {
+  if (!db) return;
+  return new Promise(res => {
+    const tx = db.transaction(STORE, 'readwrite');
+    tx.objectStore(STORE).clear();
+    tx.oncomplete = () => res();
+  });
+}
+
+// ============================================================
+// RATE LIMITER
+// ============================================================
+let rateRemain     = 100;  // X-Ratelimit-Remaining
+let errRemain      = 100;  // X-ESI-Error-Limit-Remain
+let isThrottled    = false;
+let throttleUntil  = 0;
+
+// Cache session counters
+let cacheHits  = 0;
+let cacheMisses = 0;
+let cache304s  = 0;
+let bytesSaved = 0;
+
+function updateRateUI() {
+  const rf = document.getElementById('rateFill');
+  const ev = document.getElementById('rateVal');
+  const ef = document.getElementById('errFill');
+  const ev2 = document.getElementById('errVal');
+  const tb = document.getElementById('throttleBadge');
+
+  rf.style.width = rateRemain + '%';
+  rf.className = 'rate-fill' + (rateRemain < 20 ? ' danger' : rateRemain < 50 ? ' warn' : '');
+  ev.textContent = rateRemain;
+
+  ef.style.width = errRemain + '%';
+  ef.className = 'rate-fill' + (errRemain < 20 ? ' danger' : errRemain < 50 ? ' warn' : '');
+  ev2.textContent = errRemain;
+
+  tb.style.display = isThrottled ? '' : 'none';
+
+  document.getElementById('statHit').textContent  = 'HITS: '  + cacheHits;
+  document.getElementById('statMiss').textContent = 'MISS: '  + cacheMisses;
+  document.getElementById('stat304').textContent  = '304s: '  + cache304s;
+  document.getElementById('tab-cache-count').textContent = cacheHits + cache304s;
+}
+
+function parseRateHeaders(headers) {
+  const rl = headers.get('X-Ratelimit-Remaining');
+  const el = headers.get('X-ESI-Error-Limit-Remain');
+  if (rl !== null) rateRemain = parseInt(rl);
+  if (el !== null) errRemain  = parseInt(el);
+  updateRateUI();
+}
+
+async function checkThrottle() {
+  const floor = parseInt(document.getElementById('throttleFloor').value);
+  if (errRemain < floor || rateRemain < 10) {
+    isThrottled = true;
+    updateRateUI();
+    // Back off proportionally — lower remaining = longer wait
+    const delay = errRemain < 20 ? 2000 : errRemain < floor ? 500 : 200;
+    await sleep(delay);
+  } else {
+    isThrottled = false;
+  }
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ============================================================
+// ESI FETCH WITH CACHING + ETAG + RATE LIMIT
+// ============================================================
+async function esiFetch(url) {
+  await checkThrottle();
+  if (stopFlag) throw new Error('STOPPED');
+
+  const cacheKey = url;
+  const cached = await dbGet(cacheKey);
+  const now = Date.now();
+
+  // 1. Fresh cache hit — return immediately, no request
+  if (cached && cached.expires && now < cached.expires) {
+    cacheHits++;
+    bytesSaved += cached.size || 0;
+    updateRateUI();
+    return cached.data;
+  }
+
+  // 2. Build headers — include ETag for conditional request
+  const headers = {};
+  if (cached && cached.etag) headers['If-None-Match'] = cached.etag;
+
+  let resp;
+  try {
+    resp = await fetch(url, { headers });
+  } catch(e) {
+    // Network error — return stale cache if available
+    if (cached) { cacheHits++; return cached.data; }
+    throw e;
+  }
+
+  parseRateHeaders(resp.headers);
+
+  // 3. 304 Not Modified — data unchanged, refresh expiry
+  if (resp.status === 304) {
+    cache304s++;
+    bytesSaved += cached.size || 0;
+    updateRateUI();
+    if (cached) {
+      const newExpires = parseExpires(resp.headers);
+      await dbPut({ ...cached, expires: newExpires, hits: (cached.hits || 0) + 1 });
+      return cached.data;
+    }
+  }
+
+  if (!resp.ok) {
+    errRemain = Math.max(0, errRemain - 5);
+    updateRateUI();
+    if (cached) return cached.data;
+    throw new Error(`ESI ${resp.status}`);
+  }
+
+  // 4. Fresh data — parse, cache with Expires + ETag
+  const data = await resp.json();
+  const etag    = resp.headers.get('ETag') || null;
+  const expires = parseExpires(resp.headers);
+  const size    = JSON.stringify(data).length;
+
+  cacheMisses++;
+  updateRateUI();
+
+  await dbPut({ cacheKey, data, etag, expires, size, hits: 0, fetchedAt: now });
+  return data;
+}
+
+function parseExpires(headers) {
+  // Try Cache-Control: max-age first
+  const cc = headers.get('Cache-Control');
+  if (cc) {
+    const ma = cc.match(/max-age=(\d+)/);
+    if (ma) return Date.now() + parseInt(ma[1]) * 1000;
+  }
+  // Fall back to Expires header
+  const exp = headers.get('Expires');
+  if (exp) {
+    const t = new Date(exp).getTime();
+    if (!isNaN(t)) return t;
+  }
+  // Default: 5 minute TTL
+  return Date.now() + 5 * 60 * 1000;
+}
+
+// ============================================================
+// BULK REGION ORDER FETCH
+// Returns orders array only — no DOM writes so safe to call in parallel.
+// ============================================================
+async function fetchRegionOrders(regionId) {
+  const allOrders = [];
+  let page = 1;
+  let totalPages = null;
+  const startTime = Date.now();
+
+  while (!stopFlag) {
+    const url = `https://esi.evetech.net/latest/markets/${regionId}/orders/?order_type=all&page=${page}`;
+    let pageData;
+    try {
+      await checkThrottle();
+      if (stopFlag) break;
+      const resp = await fetch(url);
+      parseRateHeaders(resp.headers);
+      if (page === 1) {
+        const xp = resp.headers.get('X-Pages');
+        if (xp) totalPages = parseInt(xp);
+      }
+      if (!resp.ok) {
+        errRemain = Math.max(0, errRemain - 5);
+        updateRateUI();
+        break;
+      }
+      pageData = await resp.json();
+    } catch(e) {
+      if (stopFlag) break;
+      break;
+    }
+    if (!Array.isArray(pageData) || pageData.length === 0) break;
+    allOrders.push(...pageData);
+    if (totalPages !== null && page >= totalPages) break;
+    if (pageData.length < 1000) break;
+    page++;
+    if (page > 50) break;
+  }
+
+  return allOrders;
+}
+
+// ============================================================
+// MARKET HISTORY (per-typeId, cached aggressively)
+// days = 1, 7, or 30 — always from the SELL (destination) hub
+// ============================================================
+async function getHistory(regionId, typeId, days) {
+  try {
+    const hist = await esiFetch(`https://esi.evetech.net/latest/markets/${regionId}/history/?type_id=${typeId}`);
+    if (!Array.isArray(hist) || !hist.length) return 0;
+    const recent = hist.slice(-days);
+    return Math.round(recent.reduce((s,h) => s + h.volume, 0) / recent.length);
+  } catch(e) { return 0; }
+}
+
+// ============================================================
+// BATCH NAME RESOLUTION — /universe/names/ POST up to 1000 IDs
+// Eliminates individual universe/types/{id} calls.
+// Also captures category_id and packaged_volume per typeId.
+// ============================================================
+async function batchResolveNames(typeIds) {
+  const nameMap = {};
+  const volMap  = {};
+  const catMap  = {};
+  const chunks  = [];
+  for (let i = 0; i < typeIds.length; i += 1000) chunks.push(typeIds.slice(i, i+1000));
+
+  for (const chunk of chunks) {
+    if (stopFlag) break;
+    try {
+      const namesResp = await fetch('https://esi.evetech.net/latest/universe/names/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(chunk)
+      });
+      parseRateHeaders(namesResp.headers);
+      if (namesResp.ok) {
+        const names = await namesResp.json();
+        names.forEach(n => { nameMap[n.id] = n.name; });
+      }
+    } catch(e) { /* fall through */ }
+
+    // Fetch packaged volumes AND category_id in parallel batches of 20.
+    // ESI /universe/types/{id}/ returns group_id but NOT category_id.
+    // We get category_id by fetching /universe/groups/{group_id}/ — groups are
+    // highly cacheable (there are only ~1800 groups vs 40k+ types).
+    const volChunk = chunk.filter(id => !SDE_VOL_CACHE[id] || !TYPE_CAT_CACHE[id]);
+    const volBatch = [];
+    for (let i = 0; i < volChunk.length; i += 20) {
+      volBatch.push(volChunk.slice(i, i+20));
+    }
+    for (const batch of volBatch) {
+      if (stopFlag) break;
+      await Promise.all(batch.map(async id => {
+        try {
+          const info = await esiFetch(`https://esi.evetech.net/latest/universe/types/${id}/`);
+          if (!info) return;
+          if (info.packaged_volume) {
+            SDE_VOL_CACHE[id] = info.packaged_volume;
+            volMap[id] = info.packaged_volume;
+          }
+          // Derive category_id from group_id — check cache first
+          const groupId = info.group_id;
+          if (groupId != null) {
+            if (GROUP_CAT_CACHE[groupId] != null) {
+              TYPE_CAT_CACHE[id] = GROUP_CAT_CACHE[groupId];
+              catMap[id] = GROUP_CAT_CACHE[groupId];
+            } else {
+              // Fetch group info to get category_id
+              try {
+                const grpInfo = await esiFetch(`https://esi.evetech.net/latest/universe/groups/${groupId}/`);
+                if (grpInfo && grpInfo.category_id != null) {
+                  GROUP_CAT_CACHE[groupId] = grpInfo.category_id;
+                  TYPE_CAT_CACHE[id] = grpInfo.category_id;
+                  catMap[id] = grpInfo.category_id;
+                }
+              } catch(e) {}
+            }
+          }
+        } catch(e) {}
+      }));
+    }
+    log(`NAMES RESOLVED: ${Object.keys(nameMap).length} · VOLUMES: ${Object.keys(SDE_VOL_CACHE).length} · CATS: ${Object.keys(TYPE_CAT_CACHE).length}`);
+  }
+  return { nameMap, volMap, catMap };
+}
+
+// ============================================================
+// APP STATE
+// ============================================================
+let allResults = [], filteredResults = [], prevResultKeys = new Set(), newOppKeys = new Set();
+let scanAllResults = []; // unfiltered scan output — used for live category re-filtering
+let watchlist = JSON.parse(localStorage.getItem('eve-arb-wl') || '[]');
+let scanActive = false, stopFlag = false;
+let currentSort = 'margin', currentDir = -1;
+let showNewOnly = false, scanStartTime = 0, expandedRow = null;
+let selectedCats = new Set(['all']);
+
+// ============================================================
+// CATEGORY / HUB CONTROLS
+// ============================================================
+function toggleCat(btn) {
+  const cat = btn.dataset.cat;
+  if (cat === 'all') {
+    selectedCats.clear(); selectedCats.add('all');
+    document.querySelectorAll('[data-cat]').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+  } else {
+    const allBtn = document.querySelector('[data-cat="all"]');
+    allBtn.classList.remove('active'); selectedCats.delete('all');
+    if (selectedCats.has(cat)) {
+      selectedCats.delete(cat); btn.classList.remove('active');
+      if (selectedCats.size === 0) { selectedCats.add('all'); allBtn.classList.add('active'); }
+    } else { selectedCats.add(cat); btn.classList.add('active'); }
+  }
+  // Re-apply category filter from full scan results immediately
+  if (scanAllResults.length) {
+    allResults = applyCatFilter(scanAllResults, selectedCats);
+    updateTripProfits();
+    applyFilter();
+  }
+}
+
+function toggleHub(id, el) {
+  el.classList.toggle('active');
+  el.querySelector('input').checked = el.classList.contains('active');
+}
+
+function getSelectedHubs() {
+  return Object.keys(HUBS).filter(id => document.getElementById('hub-'+id)?.classList.contains('active'));
+}
+
+// ============================================================
+// ROUTE MATRIX — post-scan display filter only
+// All routes are shown by default. Unchecking hides from table.
+// Does NOT affect which hubs are fetched during scan.
+// ============================================================
+const HUB_IDS   = ['10000002','10000043','10000032','10000042','10000030'];
+const HUB_NAMES = { '10000002':'JITA','10000043':'AMARR','10000032':'DODIXIE','10000042':'HEK','10000030':'RENS' };
+
+let selectedRoutes = new Set();
+function routeKey(from, to) { return `${from}→${to}`; }
+
+function buildRouteMatrix() {
+  // Default: all routes visible
+  HUB_IDS.forEach(a => HUB_IDS.forEach(b => { if (a !== b) selectedRoutes.add(routeKey(a,b)); }));
+
+  const matrix = document.getElementById('routeMatrix');
+  matrix.innerHTML = '';
+
+  // Corner label
+  const corner = document.createElement('div');
+  corner.className = 'rm-header-cell origin-label';
+  corner.textContent = '↓ FROM \\ TO →';
+  matrix.appendChild(corner);
+
+  // Column headers (destinations)
+  HUB_IDS.forEach(dId => {
+    const h = document.createElement('div');
+    h.className = 'rm-header-cell';
+    h.textContent = HUB_NAMES[dId];
+    matrix.appendChild(h);
+  });
+
+  // Rows (origins)
+  HUB_IDS.forEach(oId => {
+    const label = document.createElement('div');
+    label.className = 'rm-origin-label';
+    label.textContent = HUB_NAMES[oId];
+    matrix.appendChild(label);
+
+    HUB_IDS.forEach(dId => {
+      const cell = document.createElement('div');
+      if (oId === dId) {
+        cell.className = 'rm-cell rm-diagonal';
+        matrix.appendChild(cell);
+        return;
+      }
+      const key = routeKey(oId, dId);
+      cell.className = 'rm-cell rm-checked';
+      cell.dataset.route = key;
+      const cb = document.createElement('input');
+      cb.type = 'checkbox'; cb.className = 'rm-cb'; cb.checked = true;
+      cb.addEventListener('change', () => {
+        if (cb.checked) { selectedRoutes.add(key); cell.classList.add('rm-checked'); }
+        else            { selectedRoutes.delete(key); cell.classList.remove('rm-checked'); }
+        applyFilter();
+      });
+      cell.appendChild(cb);
+      cell.addEventListener('click', e => { if (e.target !== cb) cb.click(); });
+      matrix.appendChild(cell);
+    });
+  });
+}
+
+function setAllRoutes(checked) {
+  selectedRoutes.clear();
+  document.querySelectorAll('.rm-cb').forEach(cb => {
+    cb.checked = checked;
+    const cell = cb.closest('.rm-cell');
+    if (checked) { selectedRoutes.add(cell.dataset.route); cell.classList.add('rm-checked'); }
+    else         { cell.classList.remove('rm-checked'); }
+  });
+  applyFilter();
+}
+
+function setSymmetricRoutes() {
+  selectedRoutes.clear();
+  document.querySelectorAll('.rm-cb').forEach(cb => { cb.checked = false; cb.closest('.rm-cell').classList.remove('rm-checked'); });
+  HUB_IDS.forEach((a, i) => HUB_IDS.forEach((b, j) => {
+    if (i >= j) return;
+    [routeKey(a,b), routeKey(b,a)].forEach(key => {
+      selectedRoutes.add(key);
+      const cell = document.querySelector(`.rm-cell[data-route="${key}"]`);
+      if (cell) { cell.classList.add('rm-checked'); cell.querySelector('.rm-cb').checked = true; }
+    });
+  }));
+  applyFilter();
+}
+
+function toggleRouteMatrix() {
+  const body    = document.getElementById('routeMatrixBody');
+  const toggle  = document.getElementById('routeMatrixToggle');
+  const isOpen  = toggle.classList.contains('open');
+  body.style.display   = isOpen ? 'none' : '';
+  toggle.classList.toggle('open', !isOpen);
+}
+
+function toggleHaulCalc() {
+  const body   = document.getElementById('haulBody');
+  const toggle = document.getElementById('haulToggle');
+  const header = document.getElementById('haulHeader');
+  const isOpen = toggle.classList.contains('open');
+  body.style.display = isOpen ? 'none' : '';
+  toggle.classList.toggle('open', !isOpen);
+  header.classList.toggle('open', !isOpen);
+}
+
+function showTab(name, btn) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('panel-'+name).classList.add('active');
+  if (name === 'watchlist') renderWatchlist();
+  if (name === 'cache') refreshCacheView();
+}
+
+// ============================================================
+// UI HELPERS
+// ============================================================
+function log(msg) { document.getElementById('logBar').innerHTML = '&gt; ' + msg + '<span class="cursor">_</span>'; }
+function setProgress(pct, text, sub) {
+  document.getElementById('progressBar').style.width = Math.min(100, pct) + '%';
+  document.getElementById('progressText').textContent = text;
+  document.getElementById('progressPct').textContent = sub || '';
+}
+function copyName(el, name) {
+  navigator.clipboard.writeText(name).then(() => {
+    el.textContent = 'COPIED!';
+    el.classList.add('copied');
+    setTimeout(() => { el.textContent = 'COPY'; el.classList.remove('copied'); }, 1500);
+  }).catch(() => {
+    // Fallback for browsers without clipboard API
+    const ta = document.createElement('textarea');
+    ta.value = name; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    el.textContent = 'COPIED!'; el.classList.add('copied');
+    setTimeout(() => { el.textContent = 'COPY'; el.classList.remove('copied'); }, 1500);
+  });
+}
+
+function fmtISK(v) {
+  if (v == null || isNaN(v)) return '—';
+  if (v >= 1e12) return (v/1e12).toFixed(2)+'T';
+  if (v >= 1e9)  return (v/1e9).toFixed(2)+'B';
+  if (v >= 1e6)  return (v/1e6).toFixed(2)+'M';
+  if (v >= 1e3)  return (v/1e3).toFixed(1)+'k';
+  return v.toFixed(0);
+}
+function fmtVol(v) {
+  if (!v) return '—';
+  if (v >= 1e9) return (v/1e9).toFixed(1)+'B';
+  if (v >= 1e6) return (v/1e6).toFixed(1)+'M';
+  if (v >= 1e3) return (v/1e3).toFixed(0)+'k';
+  return v;
+}
+function fmtBytes(b) {
+  if (b >= 1e6) return (b/1e6).toFixed(1)+' MB';
+  if (b >= 1e3) return (b/1e3).toFixed(0)+' KB';
+  return b+' B';
+}
+function oppKey(r) { return `${r.typeId}-${r.buyHubId}-${r.sellHubId}`; }
+
+// ============================================================
+// SCAN ORCHESTRATION
+// ============================================================
+function toggleScan() { if (!scanActive) startScan(); }
+function stopScan() {
+  stopFlag = true;
+  log('SCAN ABORTED');
+  document.getElementById('scanBtn').disabled = false;
+  document.getElementById('scanBtn').classList.remove('running');
+  document.getElementById('stopBtn').style.display = 'none';
+  document.getElementById('workingBadge').classList.remove('active');
+  scanActive = false;
+}
+
+async function startScan() {
+  const hubs = getSelectedHubs();
+  if (hubs.length < 2) { alert('Select at least 2 trade hubs'); return; }
+
+  scanActive = true; stopFlag = false;
+  prevResultKeys = new Set(allResults.map(oppKey));
+  allResults = []; filteredResults = []; newOppKeys.clear(); scanAllResults = [];
+  cacheHits = 0; cacheMisses = 0; cache304s = 0; bytesSaved = 0;
+  scanStartTime = Date.now();
+
+  document.getElementById('scanBtn').classList.add('running');
+  document.getElementById('scanBtn').disabled = true;
+  document.getElementById('stopBtn').style.display = '';
+  document.getElementById('workingBadge').classList.add('active');
+
+  const tax         = parseFloat(document.getElementById('taxRate').value) / 100;
+  const minMargin   = parseFloat(document.getElementById('minMargin').value) / 100;
+  const minVol      = parseInt(document.getElementById('minVol').value) || 0;
+  const minProfit   = parseFloat(document.getElementById('minProfit').value) || 0;
+  const cargo       = parseFloat(document.getElementById('cargoM3').value) || 10000;
+  const volDays     = parseInt(document.getElementById('volPeriod').value) || 7;
+  const minSellOrds = parseInt(document.getElementById('minSellOrders').value) || 1;
+  const maxPriceMult = parseFloat(document.getElementById('maxPriceMult').value) || 0;
+
+  // Update column header to reflect selected period
+  document.getElementById('volColHeader').textContent = volDays + 'd';
+
+  // ── STEP 1: Fetch ALL orders for each region in bulk — ALL HUBS IN PARALLEL ──
+  log('BULK FETCHING ALL REGION ORDERS IN PARALLEL...');
+  setProgress(0, 'Fetching all hub regions simultaneously...', '');
+
+  const regionOrderMaps = {};
+  let totalOrders = 0;
+
+  // Fetch all hubs simultaneously — biggest speed win
+  const hubFetches = await Promise.all(
+    hubs.map(hubId => fetchRegionOrders(hubId).then(orders => ({ hubId, orders })))
+  );
+
+  // Process results sequentially (DOM-safe, CPU-cheap)
+  for (const { hubId, orders } of hubFetches) {
+    if (stopFlag) break;
+    const hub = HUBS[hubId];
+    totalOrders += orders.length;
+
+    const typeMap = new Map();
+    for (const o of orders) {
+      if (Number(o.location_id) !== hub.station) continue;
+      if (Number(o.system_id)   !== hub.system)  continue;
+      if (!typeMap.has(o.type_id)) typeMap.set(o.type_id, { sells: [], buys: [], depth: 0 });
+      const entry = typeMap.get(o.type_id);
+      if (o.is_buy_order) entry.buys.push(o);
+      else { entry.sells.push(o); entry.depth += Number(o.volume_remain); }
+    }
+    typeMap.forEach(v => {
+      v.sells.sort((a,b) => Number(a.price) - Number(b.price));
+      v.buys.sort((a,b)  => Number(b.price) - Number(a.price));
+    });
+    regionOrderMaps[hubId] = typeMap;
+    log(`${hub.name}: ${orders.length.toLocaleString()} orders · ${typeMap.size.toLocaleString()} items at station`);
+  }
+
+  if (stopFlag) { finishScan(); return; }
+
+  // ── STEP 1b: Gap-fill — per-typeId fetch for items missing from bulk ──────
+  // ESI's bulk endpoint has a ~5 min cache and can miss recently-posted orders.
+  // For any typeId present in one hub's typeMap but absent in another hub's typeMap,
+  // do a direct per-typeId fetch for the missing hub to catch those orders.
+  log('CHECKING FOR BULK FEED GAPS...');
+  const allKnownTypeIds = new Set();
+  Object.values(regionOrderMaps).forEach(m => m.forEach((_, tid) => allKnownTypeIds.add(tid)));
+
+  let gapsFilled = 0;
+  for (const hubId of hubs) {
+    if (stopFlag) break;
+    const hub  = HUBS[hubId];
+    const tMap = regionOrderMaps[hubId];
+    // Find typeIds active in OTHER hubs but missing here
+    const missingHere = [];
+    for (const tid of allKnownTypeIds) {
+      if (!tMap.has(tid)) missingHere.push(tid);
+    }
+    if (!missingHere.length) continue;
+    log(`${hub.name}: bulk missed ${missingHere.length} typeIds — fetching individually...`);
+
+    for (let i = 0; i < missingHere.length && !stopFlag; i += 50) {
+      const batch = missingHere.slice(i, i + 50);
+      await Promise.all(batch.map(async tid => {
+        try {
+          const resp = await fetch(
+            `https://esi.evetech.net/latest/markets/${hubId}/orders/?order_type=sell&type_id=${tid}`
+          );
+          if (!resp.ok) return;
+          const orders = await resp.json();
+          const stationOrders = orders.filter(o =>
+            Number(o.location_id) === hub.station &&
+            Number(o.system_id)   === hub.system  &&
+            !o.is_buy_order
+          );
+          if (!stationOrders.length) return;
+          stationOrders.sort((a, b) => Number(a.price) - Number(b.price));
+          const depth = stationOrders.reduce((s, o) => s + Number(o.volume_remain), 0);
+          tMap.set(tid, { sells: stationOrders, buys: [], depth });
+          gapsFilled++;
+        } catch(e) {}
+      }));
+    }
+    if (gapsFilled > 0) log(`Gap-fill complete: added ${gapsFilled} items to station maps`);
+  }
+  log('RUNNING CROSS-HUB PRICE COMPARISON...');
+  setProgress(40, 'Comparing prices across hubs...', '');
+
+  // Union of all typeIds present in any hub
+  const allTypeIds = new Set();
+  Object.values(regionOrderMaps).forEach(map => map.forEach((_, tid) => allTypeIds.add(tid)));
+
+  const typeIdArr = Array.from(allTypeIds);
+  let compared = 0;
+  const opportunities = [];
+
+  for (const typeId of typeIdArr) {
+    if (stopFlag) break;
+    for (const buyHubId of hubs) {
+      for (const sellHubId of hubs) {
+        if (buyHubId === sellHubId) continue;
+        const bMap = regionOrderMaps[buyHubId];
+        const sMap = regionOrderMaps[sellHubId];
+        if (!bMap || !sMap) continue;
+        const bEntry = bMap.get(typeId);
+        const sEntry = sMap.get(typeId);
+        if (!bEntry || !sEntry) continue;
+        if (!bEntry.sells.length || !sEntry.sells.length) continue;
+        // Require a minimum number of sell orders at both stations.
+        // This filters out thin NPC-only markets where a single overpriced order
+        // is the only one present (e.g. citadel orders are invisible to ESI).
+        if (bEntry.sells.length < minSellOrds) continue;
+        if (sEntry.sells.length < minSellOrds) continue;
+        // sells[] sorted ascending → [0] = lowest sell price at each station
+        const buyPrice  = Number(bEntry.sells[0].price);  // lowest sell at origin  (what you pay)
+        const sellPrice = Number(sEntry.sells[0].price);  // lowest sell at destination (price you undercut)
+        if (sellPrice <= buyPrice) continue;
+        const net    = (sellPrice - buyPrice) - (sellPrice * tax);
+        const margin = net / buyPrice;
+        if (margin < minMargin || net < minProfit) continue;
+        const key   = `${typeId}-${buyHubId}-${sellHubId}`;
+        const isNew = !prevResultKeys.has(key);
+        if (isNew) newOppKeys.add(key);
+        opportunities.push({ typeId, name: null, buyHubId, sellHubId,
+          buyHubName: HUBS[buyHubId].name, sellHubName: HUBS[sellHubId].name,
+          buyPrice, sellPrice, profit: net, margin, volume: 0,
+          depth: bEntry.depth,
+          sellOrderCount: sEntry.sells.length,  // number of competing sell orders at destination
+          score: 0, packagedVol: SDE_VOL_CACHE[typeId] || 1,
+          tripProfit: 0, tripUnits: 0, iskPerM3: 0, isNew });
+      }
+    }
+    compared++;
+    if (compared % 5000 === 0) {
+      const pct = 40 + (compared / typeIdArr.length) * 20;
+      setProgress(pct, `Compared ${compared.toLocaleString()} / ${typeIdArr.length.toLocaleString()} items`, `${opportunities.length} opps`);
+    }
+  }
+
+  if (stopFlag) { allResults = opportunities; finishScan(); return; }
+
+  // ── STEP 3: Fetch history (20 concurrent workers) ─────────────────────
+  log(`FETCHING HISTORY FOR ${opportunities.length} CANDIDATES...`);
+  setProgress(60, `Fetching 7d volume for ${opportunities.length} opportunities...`, '');
+
+  const uniqueTypeIds = [...new Set(opportunities.map(o => o.typeId))];
+  const histMap = {}; // typeId(number) → avg daily volume
+  const avgMap  = {}; // typeId(number) → recent avg price (for outlier filter)
+  let histFetched = 0;
+
+  const histTasks = uniqueTypeIds.map(typeId => async () => {
+    if (stopFlag) return;
+    const opp = opportunities.find(o => o.typeId === typeId);
+    if (!opp) return;
+    try {
+      const hist = await esiFetch(
+        `https://esi.evetech.net/latest/markets/${opp.sellHubId}/history/?type_id=${typeId}`
+      );
+      if (Array.isArray(hist) && hist.length) {
+        const recent = hist.slice(-volDays);
+        histMap[typeId] = Math.round(recent.reduce((s,h) => s + Number(h.volume), 0) / recent.length);
+        // Also compute avg price for outlier filter — no extra request needed
+        const last7 = hist.slice(-7);
+        avgMap[typeId] = last7.reduce((s,h) => s + Number(h.average), 0) / last7.length;
+      }
+    } catch(e) {}
+    histFetched++;
+    if (histFetched % 20 === 0) {
+      const pct = 60 + (histFetched / uniqueTypeIds.length) * 20;
+      setProgress(pct, `History: ${histFetched}/${uniqueTypeIds.length} items`, `${pct.toFixed(0)}%`);
+    }
+  });
+
+  // 20 concurrent workers — history is cached so these are fast
+  let histIdx = 0;
+  async function histWorker() {
+    while (histIdx < histTasks.length && !stopFlag) { await histTasks[histIdx++](); }
+  }
+  await Promise.all(Array.from({length: 20}, histWorker));
+
+  // Apply history + outlier filter
+  let outlierStripped = 0;
+  const filtered = opportunities.filter(o => {
+    const vol = histMap[o.typeId] || 0;
+    o.volume = vol;
+    if (vol < minVol) return false;
+    // Outlier filter: skip if either price exceeds maxPriceMult × recent avg
+    if (maxPriceMult > 0) {
+      const avg = avgMap[o.typeId];
+      if (avg && avg > 0) {
+        if (o.buyPrice  > avg * maxPriceMult) { outlierStripped++; return false; }
+        if (o.sellPrice > avg * maxPriceMult) { outlierStripped++; return false; }
+      }
+    }
+    o.score = Math.log10(Math.max(1, vol)) * o.margin * 100;
+    return true;
+  });
+  if (outlierStripped > 0) log(`OUTLIER FILTER: removed ${outlierStripped} manipulated price opportunities`);
+
+  if (stopFlag) { allResults = filtered; finishScan(); return; }
+
+  // ── STEP 4: Batch name resolution ──────────────────────────────────────
+  log(`RESOLVING NAMES FOR ${[...new Set(filtered.map(o=>o.typeId))].length} ITEMS...`);
+  setProgress(80, 'Batch resolving item names...', '80%');
+
+  const resolveIds = [...new Set(filtered.map(o => o.typeId))];
+  const { nameMap, volMap, catMap } = await batchResolveNames(resolveIds);
+
+  filtered.forEach(r => {
+    r.name = nameMap[r.typeId] || `#${r.typeId}`;
+    if (volMap[r.typeId]) r.packagedVol = volMap[r.typeId];
+    else if (SDE_VOL_CACHE[r.typeId]) r.packagedVol = SDE_VOL_CACHE[r.typeId];
+    // Store resolved category on the result for filtering
+    r.categoryId = catMap[r.typeId] ?? TYPE_CAT_CACHE[r.typeId] ?? null;
+  });
+
+  // ── STEP 5: Apply category filter ─────────────────────────────────────
+  // Store full results — live category filtering happens in applyFilter()
+  scanAllResults = filtered;
+  allResults = applyCatFilter(filtered, selectedCats);
+  updateTripProfits(cargo);
+  updateBestMetrics();
+  applyFilter();
+
+  document.getElementById('lastScan').textContent = 'LAST SCAN: ' + new Date().toUTCString().slice(0,25);
+  document.getElementById('cacheAge').textContent = `SAVED ~${fmtBytes(bytesSaved)}`;
+  log(`COMPLETE · ${allResults.length} opps · ${totalOrders.toLocaleString()} orders fetched · ${cacheHits} cache hits · ${cache304s} 304s`);
+  setProgress(100, `Scan complete — ${allResults.length} opportunities found`, '100%');
+
+  finishScan();
+}
+
+function finishScan() {
+  updateTripProfits();
+  updateBestMetrics();
+  applyFilter();
+  updateWlBadge();
+  scanActive = false; stopFlag = false;
+  document.getElementById('scanBtn').disabled = false;
+  document.getElementById('scanBtn').classList.remove('running');
+  document.getElementById('stopBtn').style.display = 'none';
+  document.getElementById('workingBadge').classList.remove('active');
+}
+
+// ============================================================
+// HAUL / METRICS
+// ============================================================
+function recalcHaul() {
+  const cargo = parseFloat(document.getElementById('cargoM3').value) || 10000;
+  document.getElementById('h-cargo').textContent = cargo.toLocaleString() + ' m³';
+  if (!allResults.length) return;
+  updateTripProfits(cargo); updateBestMetrics(); applyFilter();
+}
+
+function updateTripProfits(cargo) {
+  cargo = cargo || parseFloat(document.getElementById('cargoM3').value) || 10000;
+  allResults.forEach(r => {
+    const itemVol = r.packagedVol || 1;
+    const units   = Math.min(Math.floor(cargo / itemVol), r.depth || 0);
+    r.tripProfit  = units * r.profit;
+    r.tripUnits   = units;
+    r.iskPerM3    = r.profit / itemVol;
+  });
+}
+
+function updateBestMetrics() {
+  if (!allResults.length) return;
+  const byMargin = allResults.reduce((a,b) => b.margin>a.margin?b:a);
+  const byProfit = allResults.reduce((a,b) => b.profit>a.profit?b:a);
+  const byTrip   = allResults.reduce((a,b) => b.tripProfit>a.tripProfit?b:a);
+  document.getElementById('h-vol').textContent        = byTrip.packagedVol ? byTrip.packagedVol.toFixed(2)+' m³' : '—';
+  document.getElementById('h-units').textContent      = byTrip.tripUnits ? byTrip.tripUnits.toLocaleString() : '—';
+  document.getElementById('h-trip').textContent       = fmtISK(byTrip.tripProfit);
+  document.getElementById('h-iskm3').textContent      = byTrip.iskPerM3 ? fmtISK(byTrip.iskPerM3) : '—';
+}
+
+// ============================================================
+// TABLE RENDER
+// ============================================================
+function toggleNewOnly() {
+  showNewOnly = !showNewOnly;
+  document.getElementById('newOnlyBtn').style.borderColor = showNewOnly ? 'var(--green)' : '';
+  document.getElementById('newOnlyBtn').style.color       = showNewOnly ? 'var(--green)' : '';
+  applyFilter();
+}
+
+function applyFilter() {
+  const base = applyCatFilter(scanAllResults.length ? scanAllResults : allResults, selectedCats);
+  filteredResults = base.filter(r => {
+    if (!selectedRoutes.has(routeKey(r.buyHubId, r.sellHubId))) return false;
+    if (showNewOnly && !r.isNew) return false;
+    return true;
+  });
+  document.getElementById('tab-results-count').textContent = filteredResults.length || base.length;
+  renderTable();
+}
+
+function sortTable(key) {
+  if (currentSort === key) currentDir *= -1; else { currentSort = key; currentDir = -1; }
+  document.querySelectorAll('th').forEach(t => t.classList.remove('sorted'));
+  document.querySelectorAll('[id^=sort-]').forEach(e => e.textContent = '');
+  const el = document.getElementById('sort-'+key);
+  if (el) { el.textContent = currentDir===-1?'▼':'▲'; el.parentElement.classList.add('sorted'); }
+  renderTable();
+}
+
+function renderTable() {
+  const display = filteredResults.length ? filteredResults : (showNewOnly ? [] : allResults);
+  const sorted  = [...display].sort((a,b) => {
+    const av = currentSort==='name'?(a.name||''):currentSort==='route'?a.buyHubName:currentSort==='category'?catLabel(a.categoryId):(a[currentSort]||0);
+    const bv = currentSort==='name'?(b.name||''):currentSort==='route'?b.buyHubName:currentSort==='category'?catLabel(b.categoryId):(b[currentSort]||0);
+    if (typeof av==='string') return currentDir*av.localeCompare(bv);
+    return currentDir*(bv-av);
+  });
+  document.getElementById('resultCount').textContent = `(${sorted.length})`;
+  const tbody    = document.getElementById('resultsBody');
+  if (!sorted.length) {
+    tbody.innerHTML = `<tr><td colspan="13"><div style="text-align:center;padding:3rem;font-family:var(--mono);font-size:11px;color:var(--text-dim);">NO OPPORTUNITIES FOUND<br>Try lowering thresholds or running a scan</div></td></tr>`;
+    return;
+  }
+  const maxDepth = Math.max(...sorted.slice(0,50).map(r=>r.depth||0), 1);
+  tbody.innerHTML = sorted.slice(0,500).map((r,i) => {
+    const key       = oppKey(r);
+    const mPct      = (r.margin*100).toFixed(1);
+    const mCls      = r.margin>0.15?'pct-high':r.margin>0.08?'pct-mid':'pct-low';
+    const bCls      = HUBS[r.buyHubId]?.cls||'';
+    const sCls      = HUBS[r.sellHubId]?.cls||'';
+    const name      = r.name||`#${r.typeId}`;
+    const isWatched = watchlist.some(w=>w.typeId===r.typeId);
+    const depthW    = Math.max(4, Math.round((r.depth||0)/maxDepth*40));
+    const newFlag   = r.isNew ? '🟢' : '';
+    const rowCls    = r.isNew ? 'new-opp' : i<3 ? 'top-row' : '';
+    return `<tr class="${rowCls}" data-key="${key}" onclick="toggleExpand('${key}',${r.typeId})">
+      <td><span class="watchstar" onclick="event.stopPropagation();toggleWatch(${JSON.stringify(r).replace(/"/g,'&quot;')})">${isWatched?'★':'☆'}</span></td>
+      <td><div class="item-name" title="${name}">${newFlag}${name}</div></td>
+      <td style="color:var(--text-muted);font-size:10px">${catLabel(r.categoryId)}</td>
+      <td><span class="hub-pill ${bCls}">${r.buyHubName}</span><span class="arrow">→</span><span class="hub-pill ${sCls}">${r.sellHubName}</span></td>
+      <td>${fmtISK(r.buyPrice)}</td>
+      <td>${fmtISK(r.sellPrice)}</td>
+      <td class="${mCls}">${mPct}%</td>
+      <td class="profit-val">${fmtISK(r.profit)}</td>
+      <td><div class="depth-bar" style="width:${depthW}px"></div>${fmtVol(r.depth)}</td>
+      <td style="color:var(--gold)">${fmtISK(r.tripProfit)}</td>
+      <td>${fmtVol(r.volume)}</td>
+      <td style="color:var(--text-muted)">${r.score.toFixed(0)}</td>
+      <td><span class="copy-btn" onclick="event.stopPropagation();copyName(this,'${name.replace(/'/g,"\\'")}')">COPY</span></td>
+    </tr>`;
+  }).join('');
+}
+
+function toggleExpand(key) {
+  const existing = document.querySelector('tr.expanded-row');
+  if (existing) existing.remove();
+  if (expandedRow === key) { expandedRow = null; return; }
+  expandedRow = key;
+  const row = document.querySelector(`tr[data-key="${key}"]`);
+  if (!row) return;
+  const r = allResults.find(x => oppKey(x)===key);
+  if (!r) return;
+  const cargo    = parseFloat(document.getElementById('cargoM3').value)||10000;
+  const itemVol  = r.packagedVol||1;
+  const maxUnits = Math.floor(cargo/itemVol);
+  const units    = Math.min(maxUnits, r.depth||0);
+  const detail   = document.createElement('tr');
+  detail.className = 'expanded-row';
+  detail.innerHTML = `<td colspan="13"><div class="detail-panel">
+    <div class="detail-section">
+      <div class="detail-title">Price Breakdown <span style="color:var(--amber);font-size:8px;letter-spacing:0">· NPC STATION</span></div>
+      <div class="detail-row"><span class="detail-key">Buy @ ${r.buyHubName}</span><span class="detail-val">${fmtISK(r.buyPrice)} ISK</span></div>
+      <div class="detail-row"><span class="detail-key">Sell @ ${r.sellHubName}</span><span class="detail-val">${fmtISK(r.sellPrice)} ISK</span></div>
+      <div class="detail-row"><span class="detail-key">Gross profit</span><span class="detail-val">${fmtISK(r.sellPrice-r.buyPrice)} ISK</span></div>
+      <div class="detail-row"><span class="detail-key">Tax cost</span><span class="detail-val amber">-${fmtISK(r.sellPrice*(parseFloat(document.getElementById('taxRate').value)/100))} ISK</span></div>
+      <div class="detail-row"><span class="detail-key">Net profit/unit</span><span class="detail-val green">${fmtISK(r.profit)} ISK</span></div>
+    </div>
+    <div class="detail-section">
+      <div class="detail-title">Order Depth &amp; Volume</div>
+      <div class="detail-row"><span class="detail-key">Units at station</span><span class="detail-val">${(r.depth||0).toLocaleString()}</span></div>
+      <div class="detail-row"><span class="detail-key">Sell orders at dest</span><span class="detail-val">${r.sellOrderCount||'—'}</span></div>
+      <div class="detail-row"><span class="detail-key">Packaged vol</span><span class="detail-val">${itemVol.toFixed(2)} m³/unit</span></div>
+      <div class="detail-row"><span class="detail-key">${document.getElementById('volPeriod').value}d avg daily vol</span><span class="detail-val">${fmtVol(r.volume)}</span></div>
+      <div class="detail-row"><span class="detail-key">Score</span><span class="detail-val">${r.score.toFixed(1)}</span></div>
+    </div>
+    <div class="detail-section">
+      <div class="detail-title">Hauling Calc (${cargo.toLocaleString()} m³)</div>
+      <div class="detail-row"><span class="detail-key">Units fit in cargo</span><span class="detail-val">${maxUnits.toLocaleString()}</span></div>
+      <div class="detail-row"><span class="detail-key">Units available</span><span class="detail-val">${(r.depth||0).toLocaleString()}</span></div>
+      <div class="detail-row"><span class="detail-key">Units to haul</span><span class="detail-val">${units.toLocaleString()}</span></div>
+      <div class="detail-row"><span class="detail-key">Trip profit</span><span class="detail-val gold">${fmtISK(r.tripProfit)} ISK</span></div>
+      <div class="detail-row"><span class="detail-key">ISK per m³</span><span class="detail-val green">${fmtISK(r.iskPerM3)}</span></div>
+    </div>
+  </div></td>`;
+  row.after(detail);
+}
+
+// ============================================================
+// WATCHLIST
+// ============================================================
+function toggleWatch(r) {
+  const idx = watchlist.findIndex(w => w.typeId===r.typeId && w.buyHubId===r.buyHubId && w.sellHubId===r.sellHubId);
+  if (idx >= 0) watchlist.splice(idx,1);
+  else watchlist.push({ typeId:r.typeId, name:r.name, buyHubId:r.buyHubId, sellHubId:r.sellHubId,
+    buyHubName:r.buyHubName, sellHubName:r.sellHubName, buyPrice:r.buyPrice, sellPrice:r.sellPrice,
+    profit:r.profit, margin:r.margin, volume:r.volume, addedAt:new Date().toISOString() });
+  localStorage.setItem('eve-arb-wl', JSON.stringify(watchlist));
+  updateWlBadge(); applyFilter();
+}
+function updateWlBadge() { document.getElementById('tab-wl-count').textContent = watchlist.length; }
+function renderWatchlist() {
+  const el = document.getElementById('watchlistContent');
+  if (!watchlist.length) {
+    el.innerHTML = `<div class="watchlist-empty">NO ITEMS WATCHED<br>Click ☆ on any result to add it to your watchlist</div>`;
+    return;
+  }
+  el.innerHTML = watchlist.map((w,i) => {
+    const bCls = HUBS[w.buyHubId]?.cls||'';
+    const sCls = HUBS[w.sellHubId]?.cls||'';
+    const mCls = w.margin>0.15?'pct-high':w.margin>0.08?'pct-mid':'pct-low';
+    return `<div class="wl-item">
+      <div style="flex:1">
+        <div class="wl-name">${w.name||`#${w.typeId}`}</div>
+        <div style="margin-top:4px;display:flex;gap:6px;align-items:center;">
+          <span class="hub-pill ${bCls}">${w.buyHubName}</span><span class="arrow">→</span>
+          <span class="hub-pill ${sCls}">${w.sellHubName}</span>
+          <span class="wl-meta" style="margin-left:8px;">Added ${new Date(w.addedAt).toLocaleDateString()}</span>
+        </div>
+      </div>
+      <div style="text-align:right">
+        <div class="wl-profit">${fmtISK(w.profit)} ISK</div>
+        <div class="wl-margin ${mCls}">${(w.margin*100).toFixed(1)}%</div>
+        <div class="wl-meta">${fmtVol(w.volume)}/day</div>
+      </div>
+      <button class="btn-sm" style="margin-left:8px;" onclick="removeWatch(${i})">✕</button>
+    </div>`;
+  }).join('');
+}
+function removeWatch(i) {
+  watchlist.splice(i,1);
+  localStorage.setItem('eve-arb-wl', JSON.stringify(watchlist));
+  updateWlBadge(); renderWatchlist();
+}
+
+// ============================================================
+// CACHE INSPECTOR
+// ============================================================
+async function refreshCacheView() {
+  const entries = await dbGetAll();
+  const now     = Date.now();
+  document.getElementById('ci-total').textContent = entries.length;
+  document.getElementById('ci-hits').textContent  = cacheHits;
+  document.getElementById('ci-304').textContent   = cache304s;
+  document.getElementById('ci-saved').textContent = fmtBytes(bytesSaved);
+  document.getElementById('tab-cache-count').textContent = entries.length;
+
+  const tbody = document.getElementById('cacheTableBody');
+  if (!entries.length) {
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-dim);padding:1rem;">No cache entries</td></tr>';
+    return;
+  }
+  const sorted = [...entries].sort((a,b) => (a.expires||0) - (b.expires||0));
+  tbody.innerHTML = sorted.map(e => {
+    const remaining = e.expires ? Math.round((e.expires - now)/1000) : null;
+    const expCls = remaining === null ? '' : remaining < 0 ? 'expires-stale' : remaining < 60 ? 'expires-soon' : 'expires-ok';
+    const expTxt = remaining === null ? '—' : remaining < 0 ? `STALE ${Math.abs(remaining)}s ago` : remaining > 3600 ? `${(remaining/3600).toFixed(1)}h` : `${remaining}s`;
+    const shortKey = e.cacheKey.replace('https://esi.evetech.net/latest/','').slice(0,60);
+    return `<tr>
+      <td title="${e.cacheKey}" style="max-width:280px;overflow:hidden;text-overflow:ellipsis;">${shortKey}</td>
+      <td class="${expCls}">${expTxt}</td>
+      <td style="color:var(--text-muted)">${e.etag ? e.etag.slice(0,12)+'…' : '—'}</td>
+      <td>${fmtBytes(e.size||0)}</td>
+      <td>${e.hits||0}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function clearCache() {
+  await dbClear();
+  cacheHits = 0; cacheMisses = 0; cache304s = 0; bytesSaved = 0;
+  updateRateUI();
+  if (document.getElementById('panel-cache').classList.contains('active')) refreshCacheView();
+  log('CACHE CLEARED');
+}
+
+// ============================================================
+// CSV EXPORT
+// ============================================================
+function exportCSV() {
+  if (!allResults.length) { alert('Run a scan first'); return; }
+  const headers = ['Item','Type ID','Buy Hub','Sell Hub','Buy Price','Sell Price','Margin %','Profit/Unit ISK','Depth','Trip Profit ISK','ISK/m3','7d Avg Vol','Score'];
+  const rows    = allResults.map(r => [
+    (r.name||'').replace(/,/g,''), r.typeId, r.buyHubName, r.sellHubName,
+    r.buyPrice.toFixed(2), r.sellPrice.toFixed(2), (r.margin*100).toFixed(2),
+    r.profit.toFixed(2), r.depth||0, r.tripProfit.toFixed(0), r.iskPerM3.toFixed(0), r.volume, r.score.toFixed(1)
+  ].join(','));
+  const csv = [headers.join(','), ...rows].join('\n');
+  const a   = document.createElement('a');
+  a.href    = URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+  a.download = `eve_arb_v120_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+}
+
+// ============================================================
+// STATION TRADING
+// ============================================================
+let stResults = [], stScanActive = false, stStopFlag = false;
+let stCurrentSort = 'roi', stCurrentDir = -1;
+let stSelectedCats = new Set(['all']);
+let stScanAllResults = []; // unfiltered station scan output for live re-filtering
+
+function stToggleCat(btn) {
+  const cat = btn.dataset.stCat;
+  if (cat === 'all') {
+    stSelectedCats.clear(); stSelectedCats.add('all');
+    document.querySelectorAll('[data-st-cat]').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+  } else {
+    const allBtn = document.querySelector('[data-st-cat="all"]');
+    allBtn.classList.remove('active'); stSelectedCats.delete('all');
+    if (stSelectedCats.has(cat)) {
+      stSelectedCats.delete(cat); btn.classList.remove('active');
+      if (stSelectedCats.size === 0) { stSelectedCats.add('all'); allBtn.classList.add('active'); }
+    } else { stSelectedCats.add(cat); btn.classList.add('active'); }
+  }
+  if (stScanAllResults.length) {
+    stResults = applyCatFilter(stScanAllResults, stSelectedCats);
+    document.getElementById('tab-st-count').textContent = stResults.length;
+    renderStTable();
+  }
+}
+
+function stToggleHub(id, el) {
+  document.querySelectorAll('[id^="st-hub-"]').forEach(e => e.classList.remove('active'));
+  el.classList.add('active');
+}
+
+function getStHub() {
+  const active = document.querySelector('[id^="st-hub-"].active');
+  return active ? active.id.replace('st-hub-','') : '10000002';
+}
+
+function stLog(msg) { document.getElementById('stLogBar').innerHTML = '&gt; ' + msg + '<span class="cursor">_</span>'; }
+function stSetProgress(pct, text, sub) {
+  document.getElementById('stProgressBar').style.width = Math.min(100,pct)+'%';
+  document.getElementById('stProgressText').textContent = text;
+  document.getElementById('stProgressPct').textContent = sub||'';
+}
+
+function toggleStationScan() { if (!stScanActive) startStationScan(); }
+function stopStationScan() {
+  stStopFlag = true;
+  stLog('SCAN ABORTED');
+  document.getElementById('stScanBtn').disabled = false;
+  document.getElementById('stScanBtn').classList.remove('running');
+  document.getElementById('stStopBtn').style.display = 'none';
+  document.getElementById('stWorkingBadge').classList.remove('active');
+  stScanActive = false;
+}
+
+async function startStationScan() {
+  const hubId       = getStHub();
+  const hub         = HUBS[hubId];
+  const minROI      = parseFloat(document.getElementById('st-minSpread').value)/100;
+  const tax         = parseFloat(document.getElementById('st-taxRate').value)/100;
+  const minVol      = parseInt(document.getElementById('st-minVol').value)||0;
+  const minProfit   = parseFloat(document.getElementById('st-minProfit').value)||0;
+  const minBuyOrds  = parseInt(document.getElementById('st-minBuyOrders').value)||1;
+  const volDays     = parseInt(document.getElementById('st-volPeriod').value)||7;
+
+  stScanActive = true; stStopFlag = false; stResults = []; stScanAllResults = [];
+  document.getElementById('stScanBtn').classList.add('running');
+  document.getElementById('stScanBtn').disabled = true;
+  document.getElementById('stStopBtn').style.display = '';
+  document.getElementById('st-progress-area').style.display = '';
+  document.getElementById('stWorkingBadge').classList.add('active');
+  document.getElementById('tab-st-count').textContent = '';
+
+  // ── Step 1: Bulk fetch all region orders ──────────────────────────────
+  stLog(`FETCHING ALL ORDERS FOR ${hub.name.toUpperCase()}...`);
+  stSetProgress(0, `Fetching ${hub.name} region orders...`, '');
+  const orders = await fetchRegionOrders(hubId);
+  if (stStopFlag) { stFinish(); return; }
+
+  // ── Step 2: Index station orders ─────────────────────────────────────
+  stSetProgress(20, 'Indexing station orders...', '');
+  const typeMap = new Map();
+  for (const o of orders) {
+    if (Number(o.location_id) !== hub.station) continue;
+    if (!typeMap.has(o.type_id)) typeMap.set(o.type_id, { sells:[], buys:[] });
+    const e = typeMap.get(o.type_id);
+    if (o.is_buy_order) e.buys.push(o);
+    else e.sells.push(o);
+  }
+  typeMap.forEach(v => {
+    v.sells.sort((a,b) => Number(a.price) - Number(b.price));
+    v.buys.sort((a,b)  => Number(b.price) - Number(a.price));
+  });
+  stLog(`${hub.name}: ${orders.length.toLocaleString()} orders · ${typeMap.size.toLocaleString()} items at station`);
+
+  // ── Step 2b: Gap-fill — fetch all active typeIds for this region ──────
+  // The bulk feed can miss items (ESI cache lag). We get the full list of
+  // active typeIds from the region types endpoint and fetch any that are
+  // absent from our typeMap individually.
+  stSetProgress(25, 'Checking for items missed by bulk fetch...', '');
+  let allTypeIds = [];
+  try {
+    let page = 1;
+    while (!stStopFlag) {
+      const resp = await fetch(
+        `https://esi.evetech.net/latest/markets/${hubId}/types/?page=${page}`
+      );
+      if (!resp.ok) break;
+      const data = await resp.json();
+      if (!Array.isArray(data) || !data.length) break;
+      allTypeIds = allTypeIds.concat(data);
+      if (data.length < 1000) break;
+      page++;
+    }
+  } catch(e) {}
+
+  const missingIds = allTypeIds.filter(id => !typeMap.has(id));
+  stLog(`Gap-fill: ${allTypeIds.length.toLocaleString()} active types · ${missingIds.length.toLocaleString()} missing from bulk — fetching...`);
+
+  // Fetch missing items in parallel batches of 50
+  for (let i = 0; i < missingIds.length && !stStopFlag; i += 50) {
+    const batch = missingIds.slice(i, i + 50);
+    stSetProgress(25 + (i / missingIds.length) * 15,
+      `Gap-fill: ${i}/${missingIds.length} items...`, '');
+    await Promise.all(batch.map(async typeId => {
+      try {
+        const resp = await fetch(
+          `https://esi.evetech.net/latest/markets/${hubId}/orders/?order_type=all&type_id=${typeId}`
+        );
+        if (!resp.ok) return;
+        const itemOrders = await resp.json();
+        const stationOrders = itemOrders.filter(o =>
+          Number(o.location_id) === hub.station
+        );
+        if (!stationOrders.length) return;
+        if (!typeMap.has(typeId)) typeMap.set(typeId, { sells:[], buys:[] });
+        const e = typeMap.get(typeId);
+        for (const o of stationOrders) {
+          if (o.is_buy_order) e.buys.push(o);
+          else e.sells.push(o);
+        }
+        e.sells.sort((a,b) => Number(a.price) - Number(b.price));
+        e.buys.sort((a,b)  => Number(b.price) - Number(a.price));
+      } catch(e) {}
+    }));
+  }
+  stLog(`${hub.name}: ${typeMap.size.toLocaleString()} items after gap-fill`);
+
+  // ── Step 3: Find bid-ask spread opportunities ─────────────────────────
+  // lowestAsk  = lowest sell order  = what you pay to acquire now
+  // highestBid = highest buy order  = what someone will pay right now
+  // You place a buy order at highestBid, wait to fill,
+  // then list sell at lowestAsk - 0.01 to undercut.
+  // ROI = (lowestAsk - highestBid - tax) / highestBid
+  stSetProgress(42, 'Finding spread opportunities...', '');
+  let noSell=0, noBuy=0, noBuyOrds=0, crossed=0, failROI=0;
+  const candidates = [];
+  typeMap.forEach((v, typeId) => {
+    if (!v.sells.length) { noSell++; return; }
+    if (!v.buys.length)  { noBuy++;  return; }
+    if (v.buys.length < minBuyOrds) { noBuyOrds++; return; }
+    const lowestAsk   = Number(v.sells[0].price);
+    const highestBid  = Number(v.buys[0].price);
+    if (lowestAsk <= highestBid) { crossed++; return; }
+    const yourSell = lowestAsk - 0.01;
+    const net      = (yourSell - highestBid) - (yourSell * tax);
+    const roi      = net / highestBid;
+    if (roi < minROI || net < minProfit) { failROI++; return; }
+    candidates.push({
+      typeId, name: null,
+      buyNow: highestBid, sellNow: lowestAsk, yourSell,
+      profitPerUnit: net, roi,
+      sellOrders: v.sells.length, buyOrders: v.buys.length,
+      volume: 0, score: 0
+    });
+  });
+
+  stLog(`Spread scan: ${candidates.length} candidates · ${noSell} no-sells · ${noBuy} no-buys · ${noBuyOrds} few-buys · ${crossed} crossed · ${failROI} below ROI/profit`);
+
+  if (!candidates.length) {
+    stSetProgress(100, 'No candidates — check log for breakdown', '');
+    renderStTable();
+    stFinish();
+    return;
+  }
+  if (stStopFlag) { stFinish(); return; }
+
+  // ── Step 4: History (20 workers) ──────────────────────────────────────
+  stLog(`Fetching history for ${candidates.length} candidates...`);
+  const uniqueIds = [...new Set(candidates.map(c => c.typeId))];
+  let fetched = 0;
+  const tasks = uniqueIds.map(typeId => async () => {
+    if (stStopFlag) return;
+    try {
+      const hist = await esiFetch(
+        `https://esi.evetech.net/latest/markets/${hubId}/history/?type_id=${typeId}`
+      );
+      if (Array.isArray(hist) && hist.length) {
+        const recent = hist.slice(-volDays);
+        const vol = Math.round(recent.reduce((s,h) => s+Number(h.volume), 0) / recent.length);
+        candidates.filter(c => c.typeId===typeId).forEach(c => c.volume=vol);
+      }
+    } catch(e) {}
+    fetched++;
+    if (fetched % 20 === 0)
+      stSetProgress(42+(fetched/uniqueIds.length)*40,
+        `History: ${fetched}/${uniqueIds.length}`, `${((fetched/uniqueIds.length)*100).toFixed(0)}%`);
+  });
+  let ti = 0;
+  async function stHistWorker() { while (ti<tasks.length && !stStopFlag) await tasks[ti++](); }
+  await Promise.all(Array.from({length:20}, stHistWorker));
+
+  if (stStopFlag) { stFinish(); return; }
+
+  // ── Step 5: Filter by vol, score, resolve names ───────────────────────
+  stSetProgress(85, 'Resolving names...', '85%');
+  const passing = candidates.filter(c => {
+    if (c.volume < minVol) return false;
+    c.score = Math.log10(Math.max(1, c.volume)) * c.roi * 100;
+    return true;
+  });
+  stLog(`Volume filter: ${passing.length}/${candidates.length} passed min vol ${minVol}`);
+
+  const resolveIds = [...new Set(passing.map(c => c.typeId))];
+  const { nameMap, catMap } = await batchResolveNames(resolveIds);
+  passing.forEach(c => {
+    c.name = nameMap[c.typeId] || `#${c.typeId}`;
+    c.categoryId = catMap[c.typeId] ?? TYPE_CAT_CACHE[c.typeId] ?? null;
+  });
+
+  // ── Apply category filter + store for live re-filtering ───────────────
+  stScanAllResults = passing;
+  stResults = applyCatFilter(passing, stSelectedCats);
+  document.getElementById('tab-st-count').textContent = stResults.length;
+  stSetProgress(100, `Complete — ${stResults.length} opportunities`, '100%');
+  stLog(`COMPLETE · ${stResults.length} station trade opportunities at ${hub.name}`);
+  renderStTable();
+  stFinish();
+}
+
+function stFinish() {
+  stScanActive = false; stStopFlag = false;
+  document.getElementById('stScanBtn').disabled = false;
+  document.getElementById('stScanBtn').classList.remove('running');
+  document.getElementById('stStopBtn').style.display = 'none';
+  document.getElementById('stWorkingBadge').classList.remove('active');
+}
+
+function sortStTable(key) {
+  if (stCurrentSort===key) stCurrentDir*=-1; else { stCurrentSort=key; stCurrentDir=-1; }
+  document.querySelectorAll('[id^="st-sort-"]').forEach(e => e.textContent='');
+  document.querySelectorAll('#stTable th').forEach(t => t.classList.remove('sorted'));
+  const el = document.getElementById('st-sort-'+key);
+  if (el) { el.textContent = stCurrentDir===-1?'▼':'▲'; el.parentElement.classList.add('sorted'); }
+  renderStTable();
+}
+
+function renderStTable() {
+  const sorted = [...stResults].sort((a,b) => {
+    const av = stCurrentSort==='name' ? (a.name||'') : stCurrentSort==='category' ? catLabel(a.categoryId) : (a[stCurrentSort]||0);
+    const bv = stCurrentSort==='name' ? (b.name||'') : stCurrentSort==='category' ? catLabel(b.categoryId) : (b[stCurrentSort]||0);
+    if (typeof av==='string') return stCurrentDir * av.localeCompare(bv);
+    return stCurrentDir * (bv - av);
+  });
+  document.getElementById('stResultCount').textContent = `(${sorted.length})`;
+  const tbody = document.getElementById('stBody');
+  if (!sorted.length) {
+    tbody.innerHTML = `<tr><td colspan="11"><div style="text-align:center;padding:3rem;font-family:var(--mono);font-size:11px;color:var(--text-dim);">NO OPPORTUNITIES FOUND<br>Try setting Min ROI % and Min Profit ISK to 0 and scanning again</div></td></tr>`;
+    return;
+  }
+  const maxSell = Math.max(...sorted.slice(0,50).map(r => r.sellOrders||0), 1);
+  tbody.innerHTML = sorted.slice(0,500).map(r => {
+    const rCls  = r.roi > 0.15 ? 'spread-high' : r.roi > 0.08 ? 'spread-mid' : 'spread-low';
+    const barW  = Math.max(4, Math.round((r.sellOrders||0)/maxSell*40));
+    return `<tr>
+      <td><div class="item-name" title="${r.name}">${r.name}</div></td>
+      <td style="color:var(--text-muted);font-size:10px">${catLabel(r.categoryId)}</td>
+      <td>${fmtISK(r.buyNow)}</td>
+      <td>${fmtISK(r.sellNow)}</td>
+      <td class="${rCls}">${(r.roi*100).toFixed(1)}%</td>
+      <td class="profit-val">${fmtISK(r.profitPerUnit)}</td>
+      <td><div class="compete-bar" style="width:${barW}px"></div>${r.sellOrders}</td>
+      <td style="color:var(--text-muted)">${r.buyOrders}</td>
+      <td>${fmtVol(r.volume)}</td>
+      <td style="color:var(--text-muted)">${r.score.toFixed(0)}</td>
+      <td><span class="copy-btn" onclick="event.stopPropagation();copyName(this,'${r.name.replace(/'/g,"\\'")}')">COPY</span></td>
+    </tr>`;
+  }).join('');
+}
+
+function exportStationCSV() {
+  if (!stResults.length) { alert('Run a scan first'); return; }
+  const headers = ['Item','Type ID','Buy Now','Sell Now','ROI %','Profit/Unit ISK','Sell Orders','Buy Orders','Avg Vol','Score'];
+  const rows = stResults.map(r => [
+    (r.name||'').replace(/,/g,''), r.typeId,
+    r.buyNow.toFixed(2), r.sellNow.toFixed(2),
+    (r.roi*100).toFixed(2), r.profitPerUnit.toFixed(2),
+    r.sellOrders, r.buyOrders, r.volume, r.score.toFixed(1)
+  ].join(','));
+  const csv = [headers.join(','), ...rows].join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
+  a.download = `eve_station_trade_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+}
+
+// ============================================================
+// INIT
+// ============================================================
+openDB().then(() => {
+  log('INDEXEDDB CACHE READY · v1.3.0 INITIALIZED');
+  updateRateUI();
+  updateWlBadge();
+  buildRouteMatrix();
+});
+</script>
+</body>
+</html>
