@@ -1184,12 +1184,14 @@ function parseExpires(headers) {
 // ============================================================
 // BULK REGION ORDER FETCH
 // Returns orders array only — no DOM writes so safe to call in parallel.
+// Honors the error-limit throttle so a partial first scan doesn't tank
+// the IP's error budget for subsequent scans.
 // ============================================================
 async function fetchRegionOrders(regionId) {
   const allOrders = [];
   let page = 1;
   let totalPages = null;
-  const startTime = Date.now();
+  let failedPages = 0;
 
   while (!stopFlag) {
     const url = `https://esi.evetech.net/latest/markets/${regionId}/orders/?order_type=all&page=${page}`;
@@ -1206,11 +1208,20 @@ async function fetchRegionOrders(regionId) {
       if (!resp.ok) {
         errRemain = Math.max(0, errRemain - 5);
         updateRateUI();
+        failedPages++;
+        // Surface 420 (error-limit reached) and 5xx (ESI outage) loudly — these
+        // are the exact conditions that produce silent "empty results" scans.
+        if (resp.status === 420 || resp.status === 429) {
+          log(`⚠ ESI RATE LIMITED (${resp.status}) on region ${regionId} page ${page} — waiting 60s before continuing may help`);
+        } else if (resp.status >= 500) {
+          log(`⚠ ESI SERVER ERROR (${resp.status}) on region ${regionId} page ${page} — partial data only`);
+        }
         break;
       }
       pageData = await resp.json();
     } catch(e) {
       if (stopFlag) break;
+      failedPages++;
       break;
     }
     if (!Array.isArray(pageData) || pageData.length === 0) break;
@@ -1219,6 +1230,11 @@ async function fetchRegionOrders(regionId) {
     if (pageData.length < 1000) break;
     page++;
     if (page > 50) break;
+  }
+
+  // A region returning zero orders is a clear red flag — flag it to the user.
+  if (allOrders.length === 0 && !stopFlag) {
+    log(`⚠ Region ${regionId}: 0 orders fetched (${failedPages} failed pages) — ESI may be throttling or down`);
   }
 
   return allOrders;
@@ -1852,7 +1868,9 @@ async function startScan() {
   const uniqueTypeIds = [...new Set(opportunities.map(o => o.typeId))];
   const histMap = {}; // typeId(number) → {v1, v7, v30}
   const avgMap  = {}; // typeId(number) → recent avg price (for outlier filter)
+  const histFailedIds = new Set(); // typeIds whose history fetch errored out
   let histFetched = 0;
+  let histSuccess = 0;
 
   const histTasks = uniqueTypeIds.map(typeId => async () => {
     if (stopFlag) return;
@@ -1867,8 +1885,18 @@ async function startScan() {
         // Recent average price for outlier filter — reuses the same history payload
         const last7 = hist.slice(-7);
         avgMap[typeId] = last7.reduce((s,h) => s + Number(h.average), 0) / last7.length;
+        histSuccess++;
+      } else {
+        // Empty array = item has no recorded history in this region (uncommon but valid).
+        // Treat as "known zero" — not a fetch failure.
+        histMap[typeId] = { v1: 0, v7: 0, v30: 0 };
+        histSuccess++;
       }
-    } catch(e) {}
+    } catch(e) {
+      // Actual fetch failure — record it so we can tell "no volume" (valid filter)
+      // apart from "fetch failed" (should NOT silently drop the item).
+      histFailedIds.add(typeId);
+    }
     histFetched++;
     if (histFetched % 20 === 0) {
       const pct = 60 + (histFetched / uniqueTypeIds.length) * 20;
@@ -1883,20 +1911,37 @@ async function startScan() {
   }
   await Promise.all(Array.from({length: 20}, histWorker));
 
+  // Log history-fetch health — critical for diagnosing "empty results on rescan".
+  // If ESI rate-limited us, most history calls silently fail → every opp looks
+  // like zero-volume → minVol filter drops everything → user sees an empty table.
+  if (histFailedIds.size > 0) {
+    const failPct = Math.round((histFailedIds.size / uniqueTypeIds.length) * 100);
+    log(`⚠ HISTORY: ${histSuccess}/${uniqueTypeIds.length} succeeded · ${histFailedIds.size} failed (${failPct}%) — those items kept, treated as unknown volume`);
+  } else {
+    log(`HISTORY OK: ${histSuccess}/${uniqueTypeIds.length} items`);
+  }
+
   // Apply history + outlier filter
   // Filtering uses the CURRENTLY SELECTED volume window (currentVolWindow).
   // Items below the threshold in the chosen window are dropped.
+  // Items whose history FETCH FAILED (vs returned zero) are kept with volume=0
+  // and a flag — otherwise a rate-limited second scan would look completely empty.
   let outlierStripped = 0;
+  let volFilterStripped = 0;
   const filtered = opportunities.filter(o => {
+    const histOk = histMap[o.typeId] !== undefined;
     const windows = histMap[o.typeId] || { v1:0, v7:0, v30:0 };
     o.dailyVol1  = windows.v1;
     o.dailyVol7  = windows.v7;
     o.dailyVol30 = windows.v30;
+    o.historyFailed = !histOk; // surfaced in the detail panel
     const vol = getVolForWindow(o, currentVolWindow);
     o.volume = vol; // legacy alias — used by Score
     // Sell Days — how many days of supply the origin station's stock represents
     o.sellDays = (vol > 0 && o.sellVolume != null) ? (o.sellVolume / vol) : null;
-    if (vol < minVol) return false;
+    // Only apply vol filter if we actually got history back. Items with failed
+    // history keep their place in results so the user isn't staring at an empty table.
+    if (histOk && vol < minVol) { volFilterStripped++; return false; }
     // Outlier filter: skip if either price exceeds maxPriceMult × recent avg
     if (maxPriceMult > 0) {
       const avg = avgMap[o.typeId];
@@ -1908,7 +1953,14 @@ async function startScan() {
     o.score = Math.log10(Math.max(1, vol)) * o.margin * 100;
     return true;
   });
+  if (volFilterStripped > 0)  log(`VOL FILTER: removed ${volFilterStripped} low-volume opps (below ${minVol}/day in ${currentVolWindow}d window)`);
   if (outlierStripped > 0) log(`OUTLIER FILTER: removed ${outlierStripped} manipulated price opportunities`);
+
+  // Diagnostic: if scan produced candidates but everything got filtered out,
+  // tell the user WHY so they don't assume the scan is broken.
+  if (opportunities.length > 0 && filtered.length === 0) {
+    log(`⚠ ALL ${opportunities.length} CANDIDATES FILTERED OUT — try: lower Min Daily Vol, set Max Price ×Avg to Off, or check ESI rate limits (click CLEAR CACHE and retry in 60s)`);
+  }
 
   if (stopFlag) { allResults = filtered; finishScan(); return; }
 
@@ -2104,9 +2156,10 @@ function toggleExpand(key) {
       <div class="detail-row"><span class="detail-key">Sell orders @ origin</span><span class="detail-val">${r.sellOrderCountOrigin||'—'}</span></div>
       <div class="detail-row"><span class="detail-key">Sell orders @ dest</span><span class="detail-val">${r.sellOrderCount||'—'}</span></div>
       <div class="detail-row"><span class="detail-key">Packaged vol</span><span class="detail-val">${itemVol.toFixed(2)} m³/unit</span></div>
-      <div class="detail-row"><span class="detail-key">1d avg daily vol</span><span class="detail-val ${currentVolWindow===1?'green':''}">${fmtVol(r.dailyVol1)}/d</span></div>
-      <div class="detail-row"><span class="detail-key">7d avg daily vol</span><span class="detail-val ${currentVolWindow===7?'green':''}">${fmtVol(r.dailyVol7)}/d</span></div>
-      <div class="detail-row"><span class="detail-key">30d avg daily vol</span><span class="detail-val ${currentVolWindow===30?'green':''}">${fmtVol(r.dailyVol30)}/d</span></div>
+      ${r.historyFailed ? `<div class="detail-row"><span class="detail-key">History status</span><span class="detail-val amber">⚠ fetch failed</span></div>` : ''}
+      <div class="detail-row"><span class="detail-key">1d avg daily vol</span><span class="detail-val ${currentVolWindow===1?'green':''}">${r.historyFailed ? '—' : fmtVol(r.dailyVol1) + '/d'}</span></div>
+      <div class="detail-row"><span class="detail-key">7d avg daily vol</span><span class="detail-val ${currentVolWindow===7?'green':''}">${r.historyFailed ? '—' : fmtVol(r.dailyVol7) + '/d'}</span></div>
+      <div class="detail-row"><span class="detail-key">30d avg daily vol</span><span class="detail-val ${currentVolWindow===30?'green':''}">${r.historyFailed ? '—' : fmtVol(r.dailyVol30) + '/d'}</span></div>
       <div class="detail-row"><span class="detail-key">Sell Days (${currentVolWindow}d)</span><span class="detail-val">${sellDaysStr}</span></div>
       <div class="detail-row"><span class="detail-key">Velocity</span><span class="detail-val">${formatVelocityTag(r) || '<span style="color:var(--text-muted)">—</span>'}</span></div>
       <div class="detail-row"><span class="detail-key">Score</span><span class="detail-val">${r.score.toFixed(1)}</span></div>
@@ -2528,6 +2581,8 @@ async function startStationScan() {
   // so the 1d/7d/30d toggle can switch between them without rescanning.
   stLog(`Fetching history for ${candidates.length} candidates (all windows)...`);
   const uniqueIds = [...new Set(candidates.map(c => c.typeId))];
+  const stHistSuccessIds = new Set(); // typeIds whose history fetch returned data (or valid empty)
+  const stHistFailedIds  = new Set(); // typeIds whose history fetch errored out
   let fetched = 0;
   const tasks = uniqueIds.map(typeId => async () => {
     if (stStopFlag) return;
@@ -2547,8 +2602,23 @@ async function startStationScan() {
           c.volume = vol;
           c.sellDays = (vol > 0 && c.sellVolume != null) ? (c.sellVolume / vol) : null;
         });
+        stHistSuccessIds.add(typeId);
+      } else {
+        // Valid empty response — item has no recorded history (rare but not a fail)
+        candidates.filter(c => c.typeId===typeId).forEach(c => {
+          c.dailyVol1 = 0; c.dailyVol7 = 0; c.dailyVol30 = 0;
+          c.volume = 0; c.sellDays = null;
+        });
+        stHistSuccessIds.add(typeId);
       }
-    } catch(e) {}
+    } catch(e) {
+      // Record failure so we can keep the item in results (as "unknown volume")
+      // instead of silently dropping it via the minVol filter.
+      stHistFailedIds.add(typeId);
+      candidates.filter(c => c.typeId===typeId).forEach(c => {
+        c.historyFailed = true;
+      });
+    }
     fetched++;
     if (fetched % 20 === 0)
       stSetProgress(42+(fetched/uniqueIds.length)*40,
@@ -2560,14 +2630,26 @@ async function startStationScan() {
 
   if (stStopFlag) { stFinish(); return; }
 
+  // Surface history-fetch health so a broken rescan shows a clear reason, not an empty table.
+  if (stHistFailedIds.size > 0) {
+    const failPct = Math.round((stHistFailedIds.size / uniqueIds.length) * 100);
+    stLog(`⚠ HISTORY: ${stHistSuccessIds.size}/${uniqueIds.length} succeeded · ${stHistFailedIds.size} failed (${failPct}%) — those items kept, treated as unknown volume`);
+  }
+
   // ── Step 5: Filter by vol, score, resolve names ───────────────────────
   stSetProgress(85, 'Resolving names...', '85%');
+  // Keep items whose history FETCH FAILED — treat them as "unknown volume" rather
+  // than silently dropping them. Prevents the "empty table after rescan" trap
+  // when ESI has rate-limited us.
   const passing = candidates.filter(c => {
-    if (c.volume < minVol) return false;
-    c.score = Math.log10(Math.max(1, c.volume)) * c.roi * 100;
+    if (!c.historyFailed && c.volume < minVol) return false;
+    c.score = Math.log10(Math.max(1, c.volume || 0)) * c.roi * 100;
     return true;
   });
   stLog(`Volume filter: ${passing.length}/${candidates.length} passed min vol ${minVol}`);
+  if (candidates.length > 0 && passing.length === 0) {
+    stLog(`⚠ ALL ${candidates.length} CANDIDATES FILTERED OUT — try: lower Min Daily Vol, or wait 60s and click CLEAR CACHE if ESI rate-limited you`);
+  }
 
   const resolveIds = [...new Set(passing.map(c => c.typeId))];
   const { nameMap, catMap } = await batchResolveNames(resolveIds);
