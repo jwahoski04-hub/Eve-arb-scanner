@@ -413,6 +413,12 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
   text-shadow:0 0 6px rgba(251,191,36,0.5);cursor:help;vertical-align:middle;
 }
 .depth-bar{display:inline-block;height:6px;border-radius:2px;background:var(--cyan-dim);border:1px solid var(--cyan-mid);vertical-align:middle;margin-right:4px;}
+/* Stable Sell Volume cell — fixed min width + internal flex layout so the
+   column doesn't resize when filtering/sorting changes the visible rows. */
+.col-sellvol{min-width:100px;}
+.sellvol-cell{display:flex;align-items:center;justify-content:center;gap:6px;}
+.sellvol-cell .depth-bar{flex-shrink:0;margin-right:0;}
+.sellvol-cell .sellvol-num{font-variant-numeric:tabular-nums;white-space:nowrap;}
 .watchstar{cursor:pointer;font-size:13px;user-select:none;transition:transform 0.15s;}
 .watchstar:hover{transform:scale(1.3);}
 .sort-arrow{font-size:8px;margin-left:2px;}
@@ -508,7 +514,10 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
     <button class="tab active" onclick="showTab('results',this)">HUB TRADING <span class="tab-badge" id="tab-results-count"></span></button>
     <button class="tab" onclick="showTab('station',this)">STATION TRADING <span class="tab-badge" id="tab-st-count"></span></button>
     <button class="tab" onclick="showTab('watchlist',this)">WATCHLIST <span class="tab-badge" id="tab-wl-count">0</span></button>
-    <button class="tab" onclick="showTab('cache',this)">CACHE <span class="tab-badge" id="tab-cache-count">0</span></button>
+    <!-- Cache tab hidden from UI — cache still runs in the background. The
+         panel and count span remain in the DOM so existing code that updates
+         them (e.g., tab-cache-count) doesn't throw null-ref errors. -->
+    <button class="tab" onclick="showTab('cache',this)" style="display:none"><span class="tab-badge" id="tab-cache-count">0</span></button>
   </div>
 
   <div class="panel active" id="panel-results">
@@ -1991,7 +2000,10 @@ function renderTable() {
     tbody.innerHTML = `<tr><td colspan="14"><div style="text-align:center;padding:3rem;font-family:var(--mono);font-size:11px;color:var(--text-dim);">NO OPPORTUNITIES FOUND<br>Try lowering thresholds or running a scan</div></td></tr>`;
     return;
   }
-  const maxSellVol = Math.max(...sorted.slice(0,50).map(r=>r.sellVolume||0), 1);
+  // Depth bars scale against the full-scan maximum (not the filtered/sorted
+  // view) so bar widths stay consistent as the user adjusts filters/sort.
+  const baseSet = scanAllResults.length ? scanAllResults : sorted;
+  const maxSellVol = Math.max(...baseSet.map(r=>r.sellVolume||0), 1);
   tbody.innerHTML = sorted.slice(0,500).map((r,i) => {
     const key       = oppKey(r);
     const mPct      = (r.margin*100).toFixed(1);
@@ -2010,7 +2022,7 @@ function renderTable() {
       <td style="color:var(--text-muted);font-size:10px">${catLabel(r.categoryId)}</td>
       <td><span class="hub-pill ${bCls}">${r.buyHubName}</span><span class="arrow">→</span><span class="hub-pill ${sCls}">${r.sellHubName}</span></td>
       <td>${fmtISK(r.buyPrice)}</td>
-      <td><div class="depth-bar" style="width:${volBarW}px"></div>${fmtVol(r.sellVolume)}</td>
+      <td class="col-sellvol"><div class="sellvol-cell"><div class="depth-bar" style="width:${volBarW}px"></div><span class="sellvol-num">${fmtVol(r.sellVolume)}</span></div></td>
       <td style="color:var(--text-muted)">${sellDaysStr}</td>
       <td>${fmtVol(r.volume)}${r.volume ? '/d' : ''}</td>
       <td>${fmtISK(r.sellPrice)}</td>
@@ -2593,7 +2605,9 @@ function renderStTable() {
     tbody.innerHTML = `<tr><td colspan="13"><div style="text-align:center;padding:3rem;font-family:var(--mono);font-size:11px;color:var(--text-dim);">NO OPPORTUNITIES FOUND<br>Try setting Min ROI % and Min Profit ISK to 0 and scanning again</div></td></tr>`;
     return;
   }
-  const maxSellVol = Math.max(...sorted.slice(0,50).map(r => r.sellVolume||0), 1);
+  // Depth bars scale against the full-scan maximum (not the filtered/sorted
+  // view) so bar widths stay consistent when the user changes sort/filter.
+  const maxSellVol = Math.max(...stResults.map(r => r.sellVolume||0), 1);
   tbody.innerHTML = sorted.slice(0,500).map(r => {
     const rCls    = r.roi > 0.15 ? 'spread-high' : r.roi > 0.08 ? 'spread-mid' : 'spread-low';
     const volBarW = Math.max(4, Math.round((r.sellVolume||0)/maxSellVol*40));
@@ -2611,7 +2625,7 @@ function renderStTable() {
       <td>${fmtISK(r.sellNow)}</td>
       <td class="${rCls}">${(r.roi*100).toFixed(1)}%</td>
       <td class="profit-val">${fmtISK(r.profitPerUnit)}</td>
-      <td><div class="depth-bar" style="width:${volBarW}px"></div>${fmtVol(r.sellVolume)}</td>
+      <td class="col-sellvol"><div class="sellvol-cell"><div class="depth-bar" style="width:${volBarW}px"></div><span class="sellvol-num">${fmtVol(r.sellVolume)}</span></div></td>
       <td style="color:var(--text-muted)">${sellDaysStr}</td>
       <td>${fmtVol(r.volume)}${r.volume ? '/d' : ''}</td>
       <td>${r.sellOrders}</td>
