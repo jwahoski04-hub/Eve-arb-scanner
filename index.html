@@ -102,7 +102,9 @@ html,body{
 }
 .app{padding:1.5rem;min-height:100vh;}
 
-.header{display:flex;align-items:center;gap:12px;margin-bottom:1.25rem;flex-wrap:wrap;}
+.header{display:flex;flex-direction:column;gap:10px;margin-bottom:1.25rem;}
+.header-row-top{display:flex;align-items:center;gap:12px;position:relative;flex-wrap:wrap;}
+.header-row-bottom{display:flex;align-items:center;justify-content:flex-end;gap:6px;flex-wrap:wrap;}
 .logo{font-family:var(--mono);font-size:20px;color:var(--cyan);letter-spacing:0.08em;text-shadow:0 0 20px rgba(0,200,255,0.3);}
 .logo small{display:block;font-size:9px;color:var(--text-muted);letter-spacing:0.2em;margin-top:1px;}
 .ver-badge{font-family:var(--mono);font-size:10px;padding:3px 9px;border-radius:2px;background:var(--green-dim);border:1px solid rgba(0,255,136,0.3);color:var(--green);letter-spacing:0.06em;}
@@ -536,10 +538,12 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
 <div class="app">
 
   <div class="header">
-    <div class="logo">ARB SCANNER<small>EVE MARKET INTELLIGENCE</small></div>
-    <div class="live-badge"><div class="live-dot"></div>ESI LIVE</div>
-    <a class="back-hub" href="https://jwahoski04-hub.github.io/eve-tools/" title="Return to Tool Suite" style="margin-left:auto;margin-right:auto;"><span class="back-hub-arrow">◀</span><span>BACK TO HUB</span></a>
-    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+    <div class="header-row-top">
+      <div class="logo">ARB SCANNER<small>EVE MARKET INTELLIGENCE</small></div>
+      <div class="live-badge"><div class="live-dot"></div>ESI LIVE</div>
+      <a class="back-hub" href="https://jwahoski04-hub.github.io/eve-tools/" title="Return to Tool Suite" style="position:absolute;left:50%;transform:translateX(-50%);"><span class="back-hub-arrow">◀</span><span>BACK TO HUB</span></a>
+    </div>
+    <div class="header-row-bottom">
       <button class="btn-sm" onclick="clearCache()">CLEAR CACHE</button>
       <button class="btn-sm" onclick="exportCSV()">EXPORT CSV</button>
     </div>
