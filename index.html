@@ -135,6 +135,24 @@ html,body{
   color:var(--text);font-family:var(--mono);font-size:12px;padding:6px 8px;height:32px;outline:none;transition:border-color 0.2s;}
 .ctrl input:focus,.ctrl select:focus{border-color:var(--cyan);}
 .ctrl select option{background:#0f1520;}
+/* Money input — text field with an ISK prefix pill, formats with thousands separators */
+.money-input{
+  display:flex;align-items:stretch;background:var(--bg);
+  border:1px solid var(--border-bright);border-radius:2px;height:32px;overflow:hidden;
+  transition:border-color 0.2s;
+}
+.money-input:focus-within{border-color:var(--amber);}
+.money-prefix{
+  display:flex;align-items:center;padding:0 8px;
+  font-family:var(--font-mono);font-size:10px;font-weight:500;
+  color:var(--amber);background:rgba(255,166,43,0.08);
+  border-right:1px solid var(--border-bright);letter-spacing:0.3px;user-select:none;
+}
+.money-input input{
+  flex:1;min-width:0;background:transparent !important;border:none !important;
+  outline:none;color:var(--text-0);font-family:var(--font-mono);
+  font-variant-numeric:tabular-nums;font-size:12px;padding:6px 8px;text-align:right;
+}
 /* 1d/7d/30d segmented toggle — matches overall control height and style */
 .vol-toggle{display:inline-flex;border:1px solid var(--border-bright);border-radius:2px;height:32px;overflow:hidden;background:var(--bg);}
 .vol-btn{flex:1;min-width:36px;background:transparent;border:none;border-right:1px solid var(--border);color:var(--text-muted);
@@ -172,6 +190,29 @@ html,body{
 .hub-check.active.c-hek .hub-dot{background:#f09090;box-shadow:0 0 6px #f09090;}
 .hub-check.active.c-rens{border-color:rgba(180,100,255,0.4);color:#c890f0;background:rgba(180,100,255,0.07);}
 .hub-check.active.c-rens .hub-dot{background:#c890f0;box-shadow:0 0 6px #c890f0;}
+/* Inactive-state hub colors — muted version of the active palette so each hub's
+   brand color is always visible. Station Trading uses a radio model so only one
+   is active at a time; this lets users see Amarr/Dodixie/Hek/Rens in color too.*/
+.hub-check.c-jita     .hub-dot{background:#7dd4f0;opacity:0.55;}
+.hub-check.c-amarr    .hub-dot{background:#f0c060;opacity:0.55;}
+.hub-check.c-dodixie  .hub-dot{background:#60d4a0;opacity:0.55;}
+.hub-check.c-hek      .hub-dot{background:#f09090;opacity:0.55;}
+.hub-check.c-rens     .hub-dot{background:#c890f0;opacity:0.55;}
+.hub-check.c-jita:not(.active){border-color:rgba(0,200,255,0.15);color:#7dd4f0;}
+.hub-check.c-amarr:not(.active){border-color:rgba(255,183,0,0.15);color:#f0c060;}
+.hub-check.c-dodixie:not(.active){border-color:rgba(0,255,136,0.15);color:#60d4a0;}
+.hub-check.c-hek:not(.active){border-color:rgba(255,100,100,0.15);color:#f09090;}
+.hub-check.c-rens:not(.active){border-color:rgba(180,100,255,0.15);color:#c890f0;}
+.hub-check.c-jita:not(.active),
+.hub-check.c-amarr:not(.active),
+.hub-check.c-dodixie:not(.active),
+.hub-check.c-hek:not(.active),
+.hub-check.c-rens:not(.active){opacity:0.65;}
+.hub-check.c-jita:not(.active):hover{opacity:0.9;border-color:rgba(0,200,255,0.3);}
+.hub-check.c-amarr:not(.active):hover{opacity:0.9;border-color:rgba(255,183,0,0.3);}
+.hub-check.c-dodixie:not(.active):hover{opacity:0.9;border-color:rgba(0,255,136,0.3);}
+.hub-check.c-hek:not(.active):hover{opacity:0.9;border-color:rgba(255,100,100,0.3);}
+.hub-check.c-rens:not(.active):hover{opacity:0.9;border-color:rgba(180,100,255,0.3);}
 
 .cat-row{display:flex;gap:5px;flex-wrap:wrap;align-items:center;}
 .cat-btn{font-family:var(--mono);font-size:10px;padding:3px 9px;border:1px solid var(--border);border-radius:2px;
@@ -187,8 +228,15 @@ html,body{
 .cat-btn.excluded::before{content:"✕ ";font-weight:600;text-decoration:none;display:inline-block;}
 .cat-btn.excluded:hover{color:var(--red);border-color:var(--red);opacity:1;}
 /* Hint text below category rows */
-.cat-hint{font-family:var(--mono);font-size:9px;color:var(--text-dim);letter-spacing:0.04em;margin-top:4px;padding-left:2px;}
-.cat-hint b{color:var(--text-muted);font-weight:normal;}
+.cat-hint{
+  font-family:var(--font-sans);font-size:10px;color:var(--text-2);letter-spacing:0.2px;
+  margin-top:8px;padding:6px 10px;background:var(--bg-1);border:1px solid var(--border-ds);
+  border-radius:3px;display:inline-flex;align-items:center;gap:10px;flex-wrap:wrap;
+}
+.cat-hint .tip-label{color:var(--text-1);font-weight:600;letter-spacing:0.3px;text-transform:uppercase;font-size:9px;}
+.cat-hint .tip-sep{color:var(--border-hot);}
+.cat-hint .tip-left{color:var(--amber);font-weight:600;}     /* matches active cat-btn amber */
+.cat-hint .tip-right{color:var(--red);font-weight:600;}      /* matches excluded cat-btn red */
 
 /* Route matrix */
 .route-matrix-wrap{margin-top:10px;}
@@ -260,7 +308,8 @@ html,body{
 .results-wrap::-webkit-scrollbar-track{background:var(--bg-2);}
 .results-wrap::-webkit-scrollbar-thumb{background:var(--border-hot);border-radius:4px;}
 .results-wrap::-webkit-scrollbar-thumb:hover{background:var(--amber-dim);}
-table{width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed;}
+table{width:100%;border-collapse:collapse;font-size:12px;}
+#resultsTable{table-layout:fixed;}
 thead{position:sticky;top:0;z-index:2;}
 th{
   background:var(--bg-3);
@@ -273,7 +322,7 @@ th{
   padding:6px 10px;
   border-bottom:1px solid var(--border-ds);
   border-right:1px solid rgba(34,48,74,0.5);
-  text-align:left;
+  text-align:center;              /* centered by default */
   white-space:nowrap;
   cursor:pointer;
   user-select:none;
@@ -291,15 +340,29 @@ td{
   font-variant-numeric:tabular-nums;   /* key — numbers align by column */
   color:var(--text-0);
   white-space:nowrap;
+  text-align:center;              /* centered by default */
 }
 td:last-child{border-right:none;}
-td:nth-child(2){white-space:normal;}
-tbody tr:nth-child(even){background:rgba(255,255,255,0.02);}
-tr:hover td{background:rgba(74,214,255,0.04);}
+/* Item column — left-aligned and given breathing room. In Hub Trading it's
+   col 2 (after the watchstar); in Station Trading it's col 1. Target both. */
+#resultsTable thead th:nth-child(2),
+#resultsTable tbody td:nth-child(2),
+#stTable thead th:nth-child(1),
+#stTable tbody td:nth-child(1){
+  text-align:left;
+  white-space:normal;
+  padding-left:12px;
+  padding-right:12px;
+}
+/* Watchstar column stays centered but tight */
+#resultsTable thead th:nth-child(1),
+#resultsTable tbody td:nth-child(1){padding-left:6px;padding-right:6px;}
+tbody tr:nth-child(even){background:rgba(255,255,255,0.03);}
+tr:hover td{background:rgba(74,214,255,0.09);}
 tr.new-opp td{animation:flashNew 2s ease-out forwards;}
 @keyframes flashNew{0%{background:rgba(74,222,128,0.15)}100%{background:transparent}}
 tr.top-row td{background:rgba(251,191,36,0.04);}
-tr.expanded-row td{background:var(--bg-2);padding:0;border-bottom:2px solid var(--border-hot);}
+tr.expanded-row td{background:var(--bg-2);padding:0;border-bottom:2px solid var(--border-hot);text-align:left;}
 
 .item-name{font-family:var(--ui);font-size:12px;color:var(--text);white-space:normal;word-break:break-word;}
 .hub-pill{font-size:9px;padding:2px 6px;border-radius:1px;border:1px solid var(--border);}
@@ -340,7 +403,7 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
   background:var(--bg-0);border:1px solid var(--border-ds);
   object-fit:contain;
 }
-.item-cell .item-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.item-cell .item-name{flex:1;min-width:0;white-space:normal;line-height:1.35;word-break:break-word;}
 /* Gold ⚡ glyph for crossed markets in Station Trading — inline with item name */
 .crossed-glyph{
   display:inline-block;color:var(--gold);font-size:12px;margin-right:6px;
@@ -452,7 +515,7 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
         <div class="ctrl"><div class="ctrl-label">Min Margin %</div><input type="number" id="minMargin" value="5" min="0" max="100" step="0.5" /></div>
         <div class="ctrl"><div class="ctrl-label">Tax % (broker+tx)</div><input type="number" id="taxRate" value="3.6" min="0" max="15" step="0.1" /></div>
         <div class="ctrl"><div class="ctrl-label">Min Daily Vol</div><input type="number" id="minVol" value="10" min="0" /></div>
-        <div class="ctrl"><div class="ctrl-label">Min Profit ISK</div><input type="number" id="minProfit" value="100000" step="50000" /></div>
+        <div class="ctrl"><div class="ctrl-label">Min Profit ISK</div><div class="money-input"><span class="money-prefix">ISK</span><input type="text" id="minProfit" value="10,000" inputmode="numeric" oninput="formatMoneyInput(this)" onfocus="this.select()" /></div></div>
         <div class="ctrl"><div class="ctrl-label">Cargo (m³)</div><input type="number" id="cargoM3" value="10000" min="1" step="500" onchange="recalcHaul()" /></div>
         <div class="ctrl"><div class="ctrl-label">Throttle floor</div>
           <select id="throttleFloor"><option value="20">20 — Aggressive</option><option value="40" selected>40 — Normal</option><option value="60">60 — Conservative</option></select>
@@ -539,7 +602,7 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
         <button class="cat-btn" data-cat="2100" onclick="toggleCat(this)" oncontextmenu="excludeCat(this,event)">EXPERT SYS.</button>
         <button class="cat-btn" data-cat="30"   onclick="toggleCat(this)" oncontextmenu="excludeCat(this,event)">APPAREL</button>
       </div>
-      <div class="cat-hint"><b>Tip:</b> left-click to select categories · <b>right-click</b> in ALL mode to exclude a category (✕)</div>
+      <div class="cat-hint"><span class="tip-label">Tip</span><span><span class="tip-left">Left-click</span> to select a category</span><span class="tip-sep">·</span><span>in <b>ALL</b> mode, <span class="tip-right">right-click</span> to exclude a category <span class="tip-right">✕</span></span></div>
     </div>
 
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
@@ -582,9 +645,9 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
       <table id="resultsTable">
         <thead><tr>
           <th style="width:28px"></th>
-          <th style="width:18%" onclick="sortTable('name')">Item <span class="sort-arrow" id="sort-name"></span></th>
+          <th style="width:22%" onclick="sortTable('name')">Item <span class="sort-arrow" id="sort-name"></span></th>
           <th style="width:7%" onclick="sortTable('category')">Category <span class="sort-arrow" id="sort-category"></span></th>
-          <th style="width:11%" onclick="sortTable('route')">Route <span class="sort-arrow" id="sort-route"></span></th>
+          <th style="width:9%" onclick="sortTable('route')">Route <span class="sort-arrow" id="sort-route"></span></th>
           <th style="width:7%" onclick="sortTable('buyPrice')">Sell Price <span class="sort-arrow" id="sort-buyPrice"></span></th>
           <th style="width:8%" onclick="sortTable('sellVolume')"><span class="th-depth-wrap">Sell Volume <span class="sort-arrow" id="sort-sellVolume"></span><span class="depth-info">i</span><div class="depth-tip"><div class="depth-tip-title">Sell Volume</div><div class="depth-tip-body">Total units for sale at the origin hub's main station across all sell orders. This is how many units you can actually buy at the listed price. Compare against your cargo capacity to estimate how many trips are needed to clear the opportunity.</div></div></span></th>
           <th style="width:6%" onclick="sortTable('sellDays')"><span class="th-depth-wrap">Sell Days <span class="sort-arrow" id="sort-sellDays"></span><span class="depth-info">i</span><div class="depth-tip"><div class="depth-tip-title">Sell Days</div><div class="depth-tip-body">Days of supply at the origin station at the current average daily sell rate. Sell Volume ÷ Sell Avg. Lower = more competitive market; higher = slower turnover.</div></div></span></th>
@@ -609,7 +672,7 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
         <div class="ctrl"><div class="ctrl-label">Min ROI %</div><input type="number" id="st-minSpread" value="2" min="0" max="100" step="0.5" /></div>
         <div class="ctrl"><div class="ctrl-label">Tax % (broker+tx)</div><input type="number" id="st-taxRate" value="3.6" min="0" max="15" step="0.1" /></div>
         <div class="ctrl"><div class="ctrl-label">Min Daily Vol</div><input type="number" id="st-minVol" value="5" min="0" /></div>
-        <div class="ctrl"><div class="ctrl-label">Min Profit ISK</div><input type="number" id="st-minProfit" value="50000" step="50000" /></div>
+        <div class="ctrl"><div class="ctrl-label">Min Profit ISK</div><div class="money-input"><span class="money-prefix">ISK</span><input type="text" id="st-minProfit" value="10,000" inputmode="numeric" oninput="formatMoneyInput(this)" onfocus="this.select()" /></div></div>
         <div class="ctrl"><div class="ctrl-label">Min Buy Orders</div>
           <select id="st-minBuyOrders">
             <option value="1" selected>≥ 1 — Any</option>
@@ -661,7 +724,7 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
         <button class="cat-btn" data-st-cat="2100" onclick="stToggleCat(this)" oncontextmenu="stExcludeCat(this,event)">EXPERT SYS.</button>
         <button class="cat-btn" data-st-cat="30"   onclick="stToggleCat(this)" oncontextmenu="stExcludeCat(this,event)">APPAREL</button>
       </div>
-      <div class="cat-hint"><b>Tip:</b> left-click to select categories · <b>right-click</b> in ALL mode to exclude a category (✕)</div>
+      <div class="cat-hint"><span class="tip-label">Tip</span><span><span class="tip-left">Left-click</span> to select a category</span><span class="tip-sep">·</span><span>in <b>ALL</b> mode, <span class="tip-right">right-click</span> to exclude a category <span class="tip-right">✕</span></span></div>
     </div>
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
       <span class="working-badge" id="stWorkingBadge">⬡ WORKING</span>
@@ -1508,6 +1571,33 @@ function formatVelocityTag(r) {
 }
 function oppKey(r) { return `${r.typeId}-${r.buyHubId}-${r.sellHubId}`; }
 
+// Money input formatting — live thousands separators as user types.
+// The ISK prefix pill is rendered separately in CSS; this only deals with
+// the number portion. Handles caret preservation so typing feels natural.
+function formatMoneyInput(el) {
+  const raw = el.value.replace(/[^\d]/g, '');          // strip everything non-numeric
+  if (!raw) { el.value = ''; return; }
+  // Caret position handling — count how many digits precede the current caret,
+  // then reposition to the equivalent spot after formatting.
+  const oldCaret = el.selectionStart ?? el.value.length;
+  const digitsBefore = el.value.slice(0, oldCaret).replace(/[^\d]/g, '').length;
+  const formatted = Number(raw).toLocaleString('en-US');
+  el.value = formatted;
+  // Walk the formatted string forward counting digits until we match
+  let newCaret = 0, seen = 0;
+  while (newCaret < formatted.length && seen < digitsBefore) {
+    if (/\d/.test(formatted[newCaret])) seen++;
+    newCaret++;
+  }
+  try { el.setSelectionRange(newCaret, newCaret); } catch {}
+}
+// Parse a money input back to a plain number (strips commas).
+function parseMoneyInput(id) {
+  const el = document.getElementById(id);
+  if (!el) return 0;
+  return parseFloat(String(el.value).replace(/,/g, '')) || 0;
+}
+
 // ============================================================
 // SCAN ORCHESTRATION
 // ============================================================
@@ -1540,7 +1630,7 @@ async function startScan() {
   const tax         = parseFloat(document.getElementById('taxRate').value) / 100;
   const minMargin   = parseFloat(document.getElementById('minMargin').value) / 100;
   const minVol      = parseInt(document.getElementById('minVol').value) || 0;
-  const minProfit   = parseFloat(document.getElementById('minProfit').value) || 0;
+  const minProfit   = parseMoneyInput('minProfit');
   const cargo       = parseFloat(document.getElementById('cargoM3').value) || 10000;
   const minSellOrds = parseInt(document.getElementById('minSellOrders').value) || 1;
   const maxPriceMult = parseFloat(document.getElementById('maxPriceMult').value) || 0;
@@ -2204,7 +2294,7 @@ async function startStationScan() {
   const minROI      = parseFloat(document.getElementById('st-minSpread').value)/100;
   const tax         = parseFloat(document.getElementById('st-taxRate').value)/100;
   const minVol      = parseInt(document.getElementById('st-minVol').value)||0;
-  const minProfit   = parseFloat(document.getElementById('st-minProfit').value)||0;
+  const minProfit   = parseMoneyInput('st-minProfit');
   const minBuyOrds  = parseInt(document.getElementById('st-minBuyOrders').value)||1;
 
   stScanActive = true; stStopFlag = false; stResults = []; stScanAllResults = [];
