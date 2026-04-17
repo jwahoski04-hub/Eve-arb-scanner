@@ -979,9 +979,15 @@ const GROUP_CAT_CACHE = {};
 // ============================================================
 // INDEXEDDB CACHE LAYER
 // ============================================================
+// v3 adds TYPEINFO_STORE — permanent cache for type metadata (packaged_volume,
+// group_id→category_id). This data never changes across patches so it survives
+// indefinitely. The scan only re-hits /universe/types and /universe/groups for
+// typeIds it has never seen before, which dramatically speeds up rescans.
 const DB_NAME = 'eve-arb-cache-v2';
-const DB_VER  = 2;
+const DB_VER  = 3;
 const STORE   = 'responses';
+const TYPEINFO_STORE = 'typeinfo'; // permanent static data keyed by typeId
+const GROUPINFO_STORE = 'groupinfo'; // group_id → category_id, permanent
 let db = null;
 
 function openDB() {
@@ -992,6 +998,12 @@ function openDB() {
       if (!d.objectStoreNames.contains(STORE)) {
         const s = d.createObjectStore(STORE, { keyPath: 'cacheKey' });
         s.createIndex('expires', 'expires');
+      }
+      if (!d.objectStoreNames.contains(TYPEINFO_STORE)) {
+        d.createObjectStore(TYPEINFO_STORE, { keyPath: 'typeId' });
+      }
+      if (!d.objectStoreNames.contains(GROUPINFO_STORE)) {
+        d.createObjectStore(GROUPINFO_STORE, { keyPath: 'groupId' });
       }
     };
     req.onsuccess = e => { db = e.target.result; res(db); };
@@ -1006,6 +1018,69 @@ async function dbGet(key) {
     const req = tx.objectStore(STORE).get(key);
     req.onsuccess = () => res(req.result || null);
     req.onerror   = () => res(null);
+  });
+}
+
+// Persistent type-info getters/setters — bulk loaders for warming the in-memory
+// caches at startup (far cheaper than one-by-one reads during a scan).
+async function dbLoadAllTypeInfo() {
+  if (!db) return;
+  return new Promise(res => {
+    const tx = db.transaction(TYPEINFO_STORE, 'readonly');
+    const req = tx.objectStore(TYPEINFO_STORE).getAll();
+    req.onsuccess = () => {
+      (req.result || []).forEach(e => {
+        if (e.packagedVolume != null) SDE_VOL_CACHE[e.typeId] = e.packagedVolume;
+        if (e.categoryId != null)     TYPE_CAT_CACHE[e.typeId] = e.categoryId;
+      });
+      res();
+    };
+    req.onerror = () => res();
+  });
+}
+async function dbLoadAllGroupInfo() {
+  if (!db) return;
+  return new Promise(res => {
+    const tx = db.transaction(GROUPINFO_STORE, 'readonly');
+    const req = tx.objectStore(GROUPINFO_STORE).getAll();
+    req.onsuccess = () => {
+      (req.result || []).forEach(e => {
+        if (e.categoryId != null) GROUP_CAT_CACHE[e.groupId] = e.categoryId;
+      });
+      res();
+    };
+    req.onerror = () => res();
+  });
+}
+// Batched writes — one transaction per scan's worth of new entries instead of
+// thousands of tiny single-record transactions.
+async function dbSaveTypeInfoBatch(entries) {
+  if (!db || !entries.length) return;
+  return new Promise(res => {
+    const tx = db.transaction(TYPEINFO_STORE, 'readwrite');
+    const store = tx.objectStore(TYPEINFO_STORE);
+    entries.forEach(e => store.put(e));
+    tx.oncomplete = () => res();
+    tx.onerror    = () => res();
+  });
+}
+async function dbSaveGroupInfoBatch(entries) {
+  if (!db || !entries.length) return;
+  return new Promise(res => {
+    const tx = db.transaction(GROUPINFO_STORE, 'readwrite');
+    const store = tx.objectStore(GROUPINFO_STORE);
+    entries.forEach(e => store.put(e));
+    tx.oncomplete = () => res();
+    tx.onerror    = () => res();
+  });
+}
+async function dbGetTypeInfoCount() {
+  if (!db) return 0;
+  return new Promise(res => {
+    const tx = db.transaction(TYPEINFO_STORE, 'readonly');
+    const req = tx.objectStore(TYPEINFO_STORE).count();
+    req.onsuccess = () => res(req.result || 0);
+    req.onerror   = () => res(0);
   });
 }
 
@@ -1286,29 +1361,48 @@ async function batchResolveNames(typeIds) {
   const chunks  = [];
   for (let i = 0; i < typeIds.length; i += 1000) chunks.push(typeIds.slice(i, i+1000));
 
+  // Collect new type/group entries discovered during this scan; written to
+  // IndexedDB in bulk at the end so rescans don't re-fetch permanent static data.
+  const typeInfoBatch = [];
+  const groupInfoBatch = [];
+  // Dedupe group fetches WITHIN this scan — multiple types share the same group,
+  // so without this we'd fire N duplicate group requests per parallel batch.
+  const groupFetchPromises = new Map();
+
   for (const chunk of chunks) {
     if (stopFlag) break;
-    try {
-      const namesResp = await fetch('https://esi.evetech.net/latest/universe/names/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(chunk)
-      });
-      parseRateHeaders(namesResp.headers);
-      if (namesResp.ok) {
-        const names = await namesResp.json();
-        names.forEach(n => { nameMap[n.id] = n.name; });
-      }
-    } catch(e) { /* fall through */ }
 
-    // Fetch packaged volumes AND category_id in parallel batches of 20.
-    // ESI /universe/types/{id}/ returns group_id but NOT category_id.
-    // We get category_id by fetching /universe/groups/{group_id}/ — groups are
-    // highly cacheable (there are only ~1800 groups vs 40k+ types).
-    const volChunk = chunk.filter(id => !SDE_VOL_CACHE[id] || !TYPE_CAT_CACHE[id]);
+    // Run the names POST in parallel with type info fetches — names have no
+    // dependency on types, so there's no reason to await them serially.
+    const namesPromise = (async () => {
+      try {
+        const namesResp = await fetch('https://esi.evetech.net/latest/universe/names/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(chunk)
+        });
+        parseRateHeaders(namesResp.headers);
+        if (namesResp.ok) {
+          const names = await namesResp.json();
+          names.forEach(n => { nameMap[n.id] = n.name; });
+        }
+      } catch(e) { /* fall through */ }
+    })();
+
+    // Fetch packaged volumes AND category_id ONLY for types we've never seen.
+    // The persistent typeinfo cache populated at startup means most scans skip
+    // this entire loop for >95% of the items.
+    // Prefill maps from the in-memory caches so returned values are complete.
+    for (const id of chunk) {
+      if (SDE_VOL_CACHE[id] != null) volMap[id] = SDE_VOL_CACHE[id];
+      if (TYPE_CAT_CACHE[id] != null) catMap[id] = TYPE_CAT_CACHE[id];
+    }
+    const needsFetch = chunk.filter(id =>
+      SDE_VOL_CACHE[id] == null || TYPE_CAT_CACHE[id] == null
+    );
     const volBatch = [];
-    for (let i = 0; i < volChunk.length; i += 20) {
-      volBatch.push(volChunk.slice(i, i+20));
+    for (let i = 0; i < needsFetch.length; i += 24) {
+      volBatch.push(needsFetch.slice(i, i+24));
     }
     for (const batch of volBatch) {
       if (stopFlag) break;
@@ -1316,33 +1410,51 @@ async function batchResolveNames(typeIds) {
         try {
           const info = await esiFetch(`https://esi.evetech.net/latest/universe/types/${id}/`);
           if (!info) return;
-          if (info.packaged_volume) {
-            SDE_VOL_CACHE[id] = info.packaged_volume;
-            volMap[id] = info.packaged_volume;
-          }
-          // Derive category_id from group_id — check cache first
+          const pv = info.packaged_volume;
           const groupId = info.group_id;
+          let categoryId = null;
           if (groupId != null) {
             if (GROUP_CAT_CACHE[groupId] != null) {
-              TYPE_CAT_CACHE[id] = GROUP_CAT_CACHE[groupId];
-              catMap[id] = GROUP_CAT_CACHE[groupId];
+              categoryId = GROUP_CAT_CACHE[groupId];
             } else {
-              // Fetch group info to get category_id
-              try {
-                const grpInfo = await esiFetch(`https://esi.evetech.net/latest/universe/groups/${groupId}/`);
-                if (grpInfo && grpInfo.category_id != null) {
-                  GROUP_CAT_CACHE[groupId] = grpInfo.category_id;
-                  TYPE_CAT_CACHE[id] = grpInfo.category_id;
-                  catMap[id] = grpInfo.category_id;
-                }
-              } catch(e) {}
+              // Dedupe group fetches — if multiple types share the same group,
+              // only issue one request. Subsequent callers await the same promise.
+              if (!groupFetchPromises.has(groupId)) {
+                groupFetchPromises.set(groupId, (async () => {
+                  try {
+                    const grpInfo = await esiFetch(`https://esi.evetech.net/latest/universe/groups/${groupId}/`);
+                    if (grpInfo && grpInfo.category_id != null) {
+                      GROUP_CAT_CACHE[groupId] = grpInfo.category_id;
+                      groupInfoBatch.push({ groupId, categoryId: grpInfo.category_id });
+                      return grpInfo.category_id;
+                    }
+                  } catch(e) {}
+                  return null;
+                })());
+              }
+              categoryId = await groupFetchPromises.get(groupId);
             }
+          }
+          if (pv != null) { SDE_VOL_CACHE[id] = pv; volMap[id] = pv; }
+          if (categoryId != null) { TYPE_CAT_CACHE[id] = categoryId; catMap[id] = categoryId; }
+          // Queue for persistent storage
+          if (pv != null || categoryId != null) {
+            typeInfoBatch.push({ typeId: id, packagedVolume: pv, categoryId });
           }
         } catch(e) {}
       }));
     }
+
+    // Wait for the parallel names POST to finish before proceeding to next chunk
+    await namesPromise;
+
     log(`NAMES RESOLVED: ${Object.keys(nameMap).length} · VOLUMES: ${Object.keys(SDE_VOL_CACHE).length} · CATS: ${Object.keys(TYPE_CAT_CACHE).length}`);
   }
+
+  // Persist new discoveries in bulk — fire-and-forget so we don't block return.
+  if (typeInfoBatch.length)  dbSaveTypeInfoBatch(typeInfoBatch);
+  if (groupInfoBatch.length) dbSaveGroupInfoBatch(groupInfoBatch);
+
   return { nameMap, volMap, catMap };
 }
 
@@ -1872,9 +1984,18 @@ async function startScan() {
   let histFetched = 0;
   let histSuccess = 0;
 
+  // Build a typeId→opportunity index once, outside the worker loop.
+  // The old code did opportunities.find(o => o.typeId === typeId) per task,
+  // which was O(n) per call × O(unique) tasks = O(n²) — painfully slow on
+  // large opportunity sets (~10k items × ~5k uniques = 50M comparisons).
+  const oppByTypeId = new Map();
+  for (const o of opportunities) {
+    if (!oppByTypeId.has(o.typeId)) oppByTypeId.set(o.typeId, o);
+  }
+
   const histTasks = uniqueTypeIds.map(typeId => async () => {
     if (stopFlag) return;
-    const opp = opportunities.find(o => o.typeId === typeId);
+    const opp = oppByTypeId.get(typeId);
     if (!opp) return;
     try {
       const hist = await esiFetch(
@@ -1898,18 +2019,19 @@ async function startScan() {
       histFailedIds.add(typeId);
     }
     histFetched++;
-    if (histFetched % 20 === 0) {
+    if (histFetched % 24 === 0) {
       const pct = 60 + (histFetched / uniqueTypeIds.length) * 20;
       setProgress(pct, `History: ${histFetched}/${uniqueTypeIds.length} items`, `${pct.toFixed(0)}%`);
     }
   });
 
-  // 20 concurrent workers — history is cached so these are fast
+  // 24 concurrent workers — slight bump from 20. History is cached server-side
+  // downtime-to-downtime so repeated calls across a session hit a hot cache.
   let histIdx = 0;
   async function histWorker() {
     while (histIdx < histTasks.length && !stopFlag) { await histTasks[histIdx++](); }
   }
-  await Promise.all(Array.from({length: 20}, histWorker));
+  await Promise.all(Array.from({length: 24}, histWorker));
 
   // Log history-fetch health — critical for diagnosing "empty results on rescan".
   // If ESI rate-limited us, most history calls silently fail → every opp looks
@@ -2584,15 +2706,25 @@ async function startStationScan() {
   const stHistSuccessIds = new Set(); // typeIds whose history fetch returned data (or valid empty)
   const stHistFailedIds  = new Set(); // typeIds whose history fetch errored out
   let fetched = 0;
+
+  // Pre-index candidates by typeId so the worker can O(1) find them.
+  // (Replaces candidates.filter(c => c.typeId===typeId) which was O(n) per task.)
+  const candidatesByTypeId = new Map();
+  for (const c of candidates) {
+    if (!candidatesByTypeId.has(c.typeId)) candidatesByTypeId.set(c.typeId, []);
+    candidatesByTypeId.get(c.typeId).push(c);
+  }
+
   const tasks = uniqueIds.map(typeId => async () => {
     if (stStopFlag) return;
+    const matching = candidatesByTypeId.get(typeId) || [];
     try {
       const hist = await esiFetch(
         `https://esi.evetech.net/latest/markets/${hubId}/history/?type_id=${typeId}`
       );
       if (Array.isArray(hist) && hist.length) {
         const win = computeVolumeWindows(hist);
-        candidates.filter(c => c.typeId===typeId).forEach(c => {
+        matching.forEach(c => {
           c.dailyVol1  = win.v1;
           c.dailyVol7  = win.v7;
           c.dailyVol30 = win.v30;
@@ -2605,7 +2737,7 @@ async function startStationScan() {
         stHistSuccessIds.add(typeId);
       } else {
         // Valid empty response — item has no recorded history (rare but not a fail)
-        candidates.filter(c => c.typeId===typeId).forEach(c => {
+        matching.forEach(c => {
           c.dailyVol1 = 0; c.dailyVol7 = 0; c.dailyVol30 = 0;
           c.volume = 0; c.sellDays = null;
         });
@@ -2615,18 +2747,16 @@ async function startStationScan() {
       // Record failure so we can keep the item in results (as "unknown volume")
       // instead of silently dropping it via the minVol filter.
       stHistFailedIds.add(typeId);
-      candidates.filter(c => c.typeId===typeId).forEach(c => {
-        c.historyFailed = true;
-      });
+      matching.forEach(c => { c.historyFailed = true; });
     }
     fetched++;
-    if (fetched % 20 === 0)
+    if (fetched % 24 === 0)
       stSetProgress(42+(fetched/uniqueIds.length)*40,
         `History: ${fetched}/${uniqueIds.length}`, `${((fetched/uniqueIds.length)*100).toFixed(0)}%`);
   });
   let ti = 0;
   async function stHistWorker() { while (ti<tasks.length && !stStopFlag) await tasks[ti++](); }
-  await Promise.all(Array.from({length:20}, stHistWorker));
+  await Promise.all(Array.from({length:24}, stHistWorker));
 
   if (stStopFlag) { stFinish(); return; }
 
@@ -2783,8 +2913,18 @@ function exportStationCSV() {
 // ============================================================
 // INIT
 // ============================================================
-openDB().then(() => {
-  log('INDEXEDDB CACHE READY · INITIALIZED');
+openDB().then(async () => {
+  // Warm in-memory caches from persistent storage — this is what makes rescans
+  // fast. After the first full scan a user runs, subsequent scans skip most of
+  // the /universe/types and /universe/groups calls entirely.
+  await Promise.all([dbLoadAllTypeInfo(), dbLoadAllGroupInfo()]);
+  const typeCount = Object.keys(SDE_VOL_CACHE).length;
+  const groupCount = Object.keys(GROUP_CAT_CACHE).length;
+  if (typeCount > 0) {
+    log(`CACHE READY · ${typeCount.toLocaleString()} types, ${groupCount} groups preloaded`);
+  } else {
+    log('INDEXEDDB CACHE READY · INITIALIZED (first run — type metadata will be cached)');
+  }
   updateRateUI();
   updateWlBadge();
   buildRouteMatrix();
