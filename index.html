@@ -1305,60 +1305,98 @@ function parseExpires(headers) {
 // ============================================================
 async function fetchRegionOrders(regionId) {
   const allOrders = [];
-  let page = 1;
-  let totalPages = null;
   let failedPages = 0;
 
-  while (!stopFlag) {
-    const url = `https://esi.evetech.net/latest/markets/${regionId}/orders/?order_type=all&page=${page}`;
-    let pageData;
-    try {
-      await checkThrottle();
-      if (stopFlag) break;
-      const resp = await fetch(url);
-      parseRateHeaders(resp.headers);
-      if (page === 1) {
-        const xp = resp.headers.get('X-Pages');
-        if (xp) totalPages = parseInt(xp);
-      }
-      if (!resp.ok) {
-        errRemain = Math.max(0, errRemain - 5);
-        updateRateUI();
-        failedPages++;
-        // Surface 420 (error-limit reached) and 5xx (ESI outage) loudly — these
-        // are the exact conditions that produce silent "empty results" scans.
-        if (resp.status === 420 || resp.status === 429) {
-          log(`⚠ ESI RATE LIMITED (${resp.status}) on region ${regionId} page ${page} — waiting 60s before continuing may help`);
-        } else if (resp.status >= 500) {
-          log(`⚠ ESI SERVER ERROR (${resp.status}) on region ${regionId} page ${page} — partial data only`);
-        }
-        break;
-      }
-      pageData = await resp.json();
-    } catch(e) {
-      if (stopFlag) break;
+  // Fetch page 1 sequentially — we need X-Pages to know how many more to fetch,
+  // and we can't parallelize until we know the total count.
+  let totalPages = null;
+  try {
+    await checkThrottle();
+    if (stopFlag) return allOrders;
+    const url = `https://esi.evetech.net/latest/markets/${regionId}/orders/?order_type=all&page=1`;
+    const resp = await fetch(url);
+    parseRateHeaders(resp.headers);
+    const xp = resp.headers.get('X-Pages');
+    if (xp) totalPages = parseInt(xp);
+    if (!resp.ok) {
+      errRemain = Math.max(0, errRemain - 5);
+      updateRateUI();
       failedPages++;
-      break;
+      if (resp.status === 420 || resp.status === 429) {
+        log(`⚠ ESI RATE LIMITED (${resp.status}) on region ${regionId} page 1 — waiting 60s before continuing may help`);
+      } else if (resp.status >= 500) {
+        log(`⚠ ESI SERVER ERROR (${resp.status}) on region ${regionId} page 1 — partial data only`);
+      }
+      return allOrders;
     }
-    if (!Array.isArray(pageData) || pageData.length === 0) break;
-    allOrders.push(...pageData);
-    if (totalPages !== null && page >= totalPages) break;
-    if (pageData.length < 1000) break;
-    page++;
-    // Safety ceiling: ESI regions top out around 400 pages for order_type=all
-    // in The Forge. Cap at 500 to prevent runaway loops if X-Pages is missing.
-    // The previous 50-page cap was a latent bug that broke Station Trading:
-    // Jita needs ~200-400 pages to capture both buy AND sell orders, so the
-    // truncated bulk feed produced items with only one side of the market.
-    if (page > 500) {
-      log(`⚠ Region ${regionId}: hit safety cap of 500 pages — data may be partial`);
-      break;
+    const pageData = await resp.json();
+    if (Array.isArray(pageData) && pageData.length > 0) {
+      allOrders.push(...pageData);
+      // Single-page region (small markets) — we're done
+      if (pageData.length < 1000 || totalPages === 1) return allOrders;
+    } else {
+      return allOrders;
     }
+  } catch(e) {
+    if (stopFlag) return allOrders;
+    failedPages++;
+    return allOrders;
   }
 
-  // A region returning zero orders is a clear red flag — flag it to the user.
+  // Fall back to a conservative page count if X-Pages was missing
+  const lastPage = Math.min(totalPages || 500, 500);
+  if (!totalPages) {
+    log(`⚠ Region ${regionId}: X-Pages missing, will fetch up to 500 pages sequentially`);
+  }
+
+  // Fetch pages 2..lastPage in parallel batches of 8.
+  // 8 concurrent requests is aggressive enough to cut wall-clock time ~8x
+  // without risking ESI's per-IP rate limit. Total request count is unchanged.
+  const CONCURRENCY = 8;
+  for (let start = 2; start <= lastPage && !stopFlag; start += CONCURRENCY) {
+    const end = Math.min(start + CONCURRENCY - 1, lastPage);
+    await checkThrottle();
+    if (stopFlag) break;
+
+    const pages = [];
+    for (let p = start; p <= end; p++) pages.push(p);
+
+    const results = await Promise.all(pages.map(async (p) => {
+      try {
+        const resp = await fetch(
+          `https://esi.evetech.net/latest/markets/${regionId}/orders/?order_type=all&page=${p}`
+        );
+        parseRateHeaders(resp.headers);
+        if (!resp.ok) {
+          if (resp.status === 420 || resp.status === 429) {
+            log(`⚠ ESI RATE LIMITED (${resp.status}) on region ${regionId} page ${p}`);
+          }
+          failedPages++;
+          return null;
+        }
+        return await resp.json();
+      } catch(e) {
+        failedPages++;
+        return null;
+      }
+    }));
+
+    // Append in page-order so final array stays stable between runs
+    for (const pageData of results) {
+      if (!Array.isArray(pageData) || pageData.length === 0) continue;
+      allOrders.push(...pageData);
+    }
+
+    // Early exit: if totalPages was null and a batch returned an empty page,
+    // we've reached the end of the data.
+    if (!totalPages && results.some(r => !Array.isArray(r) || r.length === 0)) break;
+  }
+
   if (allOrders.length === 0 && !stopFlag) {
     log(`⚠ Region ${regionId}: 0 orders fetched (${failedPages} failed pages) — ESI may be throttling or down`);
+  }
+  if (failedPages > 0) {
+    log(`Region ${regionId}: ${failedPages} pages failed — results may be incomplete for some items`);
   }
 
   return allOrders;
