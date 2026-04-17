@@ -231,6 +231,13 @@ tr.expanded-row td{background:var(--surface2);padding:0;border-bottom:2px solid 
 .pct-mid{color:var(--amber);}
 .pct-low{color:var(--text-muted);}
 .profit-val{color:var(--green);}
+/* Velocity multiplier tag — shown next to score. Color reflects market flow: */
+/* green = demand outpaces supply (fast-moving), amber = balanced, muted = oversupplied */
+.vel-tag{display:inline-block;margin-left:6px;font-family:var(--mono);font-size:9px;padding:1px 5px;
+  border-radius:2px;border:1px solid var(--border);background:var(--bg);letter-spacing:0.02em;vertical-align:middle;}
+.vel-high{color:var(--green);border-color:rgba(0,255,136,0.35);background:var(--green-dim);}
+.vel-mid{color:var(--amber);border-color:rgba(255,183,0,0.35);background:var(--amber-dim);}
+.vel-low{color:var(--text-muted);border-color:var(--border);}
 .depth-bar{display:inline-block;height:6px;border-radius:2px;background:var(--cyan-dim);border:1px solid var(--cyan-mid);vertical-align:middle;margin-right:4px;}
 .watchstar{cursor:pointer;font-size:13px;user-select:none;transition:transform 0.15s;}
 .watchstar:hover{transform:scale(1.3);}
@@ -477,7 +484,7 @@ tr.expanded-row td{background:var(--surface2);padding:0;border-bottom:2px solid 
           <th style="width:6%" onclick="sortTable('margin')" class="sorted">Margin % <span class="sort-arrow" id="sort-margin">▼</span></th>
           <th style="width:8%" onclick="sortTable('profit')">Profit/Unit <span class="sort-arrow" id="sort-profit"></span></th>
           <th style="width:8%" onclick="sortTable('tripProfit')">Trip Profit <span class="sort-arrow" id="sort-tripProfit"></span></th>
-          <th style="width:6%" onclick="sortTable('score')"><span class="th-score-wrap">Score <span class="sort-arrow" id="sort-score"></span><span class="score-info">i</span><div class="score-tip"><div class="score-tip-title">Opportunity Score</div><div class="score-tip-formula">log₁₀(sell avg) × margin% × 100</div><div class="score-tip-body">Combines liquidity and profitability into one number. High score = high volume AND high margin. Use this to rank the best all-around hauls.</div></div></span></th>
+          <th style="width:6%" onclick="sortTable('score')"><span class="th-score-wrap">Score <span class="sort-arrow" id="sort-score"></span><span class="score-info">i</span><div class="score-tip"><div class="score-tip-title">Opportunity Score</div><div class="score-tip-formula">log₁₀(sell avg) × margin% × 100</div><div class="score-tip-body">Combines liquidity and profitability. High score = high volume AND high margin.<br><br><b style="color:var(--green)">×N velocity tag:</b> Sell Avg ÷ Sell Volume. Green &gt; 1 = demand outpaces supply (fast-moving). Amber 0.3-1 = balanced. Muted &lt; 0.3 = oversupplied.</div></div></span></th>
           <th style="width:4%"></th>
         </tr></thead>
         <tbody id="resultsBody">
@@ -1316,6 +1323,22 @@ function fmtBytes(b) {
   if (b >= 1e3) return (b/1e3).toFixed(0)+' KB';
   return b+' B';
 }
+// Velocity multiplier = sellAvg / sellVolume = 1 / sellDays.
+// > 1.0  → market drains faster than it's stocked (green, high demand)
+// 0.3-1  → roughly balanced daily turnover (amber)
+// < 0.3  → oversupplied relative to demand (muted)
+// Returns an HTML snippet ready to inject next to a score cell.
+function formatVelocityTag(r) {
+  const vol = r.volume || 0;          // current-window daily avg (Sell Avg)
+  const sv  = r.sellVolume || 0;      // units currently for sale at station
+  if (!vol || !sv) return '';
+  const v = vol / sv;
+  const cls = v >= 1.0 ? 'vel-high' : v >= 0.3 ? 'vel-mid' : 'vel-low';
+  const label = v >= 100  ? v.toFixed(0) :
+                v >= 10   ? v.toFixed(1) :
+                            v.toFixed(2);
+  return `<span class="vel-tag ${cls}" title="Velocity = Sell Avg ÷ Sell Volume (${vol.toLocaleString()}/d ÷ ${sv.toLocaleString()})">×${label}</span>`;
+}
 function oppKey(r) { return `${r.typeId}-${r.buyHubId}-${r.sellHubId}`; }
 
 // ============================================================
@@ -1729,7 +1752,7 @@ function renderTable() {
       <td class="${mCls}">${mPct}%</td>
       <td class="profit-val">${fmtISK(r.profit)}</td>
       <td style="color:var(--gold)">${fmtISK(r.tripProfit)}</td>
-      <td style="color:var(--text-muted)">${r.score.toFixed(0)}</td>
+      <td style="color:var(--text-muted)">${r.score.toFixed(0)}${formatVelocityTag(r)}</td>
       <td><span class="copy-btn" onclick="event.stopPropagation();copyName(this,'${name.replace(/'/g,"\\'")}')">COPY</span></td>
     </tr>`;
   }).join('');
@@ -1770,6 +1793,7 @@ function toggleExpand(key) {
       <div class="detail-row"><span class="detail-key">7d avg daily vol</span><span class="detail-val ${currentVolWindow===7?'green':''}">${fmtVol(r.dailyVol7)}/d</span></div>
       <div class="detail-row"><span class="detail-key">30d avg daily vol</span><span class="detail-val ${currentVolWindow===30?'green':''}">${fmtVol(r.dailyVol30)}/d</span></div>
       <div class="detail-row"><span class="detail-key">Sell Days (${currentVolWindow}d)</span><span class="detail-val">${sellDaysStr}</span></div>
+      <div class="detail-row"><span class="detail-key">Velocity</span><span class="detail-val">${formatVelocityTag(r) || '<span style="color:var(--text-muted)">—</span>'}</span></div>
       <div class="detail-row"><span class="detail-key">Score</span><span class="detail-val">${r.score.toFixed(1)}</span></div>
     </div>
     <div class="detail-section">
@@ -1877,7 +1901,7 @@ async function clearCache() {
 // ============================================================
 function exportCSV() {
   if (!allResults.length) { alert('Run a scan first'); return; }
-  const headers = ['Item','Category','Type ID','Buy Hub','Sell Hub','Sell Price (origin)','Dest Price','Margin %','Profit/Unit ISK','Sell Volume','Sell Days','1d Avg Vol','7d Avg Vol','30d Avg Vol','Trip Profit ISK','ISK/m3','Score'];
+  const headers = ['Item','Category','Type ID','Buy Hub','Sell Hub','Sell Price (origin)','Dest Price','Margin %','Profit/Unit ISK','Sell Volume','Sell Days','Velocity','1d Avg Vol','7d Avg Vol','30d Avg Vol','Trip Profit ISK','ISK/m3','Score'];
   const rows    = allResults.map(r => [
     (r.name||'').replace(/,/g,''),
     catLabel(r.categoryId),
@@ -1886,6 +1910,7 @@ function exportCSV() {
     r.profit.toFixed(2),
     r.sellVolume||0,
     r.sellDays == null ? '' : r.sellDays.toFixed(2),
+    (r.sellVolume && r.volume) ? (r.volume / r.sellVolume).toFixed(3) : '',
     r.dailyVol1||0, r.dailyVol7||0, r.dailyVol30||0,
     r.tripProfit.toFixed(0), r.iskPerM3.toFixed(0), r.score.toFixed(1)
   ].join(','));
@@ -2234,7 +2259,7 @@ function renderStTable() {
       <td>${fmtVol(r.volume)}${r.volume ? '/d' : ''}</td>
       <td>${r.sellOrders}</td>
       <td style="color:var(--text-muted)">${r.buyOrders}</td>
-      <td style="color:var(--text-muted)">${r.score.toFixed(0)}</td>
+      <td style="color:var(--text-muted)">${r.score.toFixed(0)}${formatVelocityTag(r)}</td>
       <td><span class="copy-btn" onclick="event.stopPropagation();copyName(this,'${r.name.replace(/'/g,"\\'")}')">COPY</span></td>
     </tr>`;
   }).join('');
@@ -2242,7 +2267,7 @@ function renderStTable() {
 
 function exportStationCSV() {
   if (!stResults.length) { alert('Run a scan first'); return; }
-  const headers = ['Item','Category','Type ID','Buy Now','Sell Now','ROI %','Profit/Unit ISK','Sell Volume','Sell Days','1d Avg Vol','7d Avg Vol','30d Avg Vol','Sell Orders','Buy Orders','Score'];
+  const headers = ['Item','Category','Type ID','Buy Now','Sell Now','ROI %','Profit/Unit ISK','Sell Volume','Sell Days','Velocity','1d Avg Vol','7d Avg Vol','30d Avg Vol','Sell Orders','Buy Orders','Score'];
   const rows = stResults.map(r => [
     (r.name||'').replace(/,/g,''),
     catLabel(r.categoryId),
@@ -2251,6 +2276,7 @@ function exportStationCSV() {
     (r.roi*100).toFixed(2), r.profitPerUnit.toFixed(2),
     r.sellVolume||0,
     r.sellDays == null ? '' : r.sellDays.toFixed(2),
+    (r.sellVolume && r.volume) ? (r.volume / r.sellVolume).toFixed(3) : '',
     r.dailyVol1||0, r.dailyVol7||0, r.dailyVol30||0,
     r.sellOrders, r.buyOrders, r.score.toFixed(1)
   ].join(','));
