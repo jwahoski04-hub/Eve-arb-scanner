@@ -91,11 +91,6 @@ html,body{background:var(--bg);color:var(--text);font-family:var(--ui);font-size
 .tab.active{color:var(--cyan);border-bottom-color:var(--cyan);}
 .tab-badge{display:inline-block;font-size:9px;padding:1px 5px;border-radius:10px;margin-left:4px;
   background:var(--amber-dim);border:1px solid rgba(255,183,0,0.3);color:var(--amber);vertical-align:middle;}
-.copy-btn{display:inline-block;font-size:9px;padding:1px 6px;border-radius:10px;margin-left:5px;
-  background:var(--amber-dim);border:1px solid rgba(255,183,0,0.3);color:var(--amber);
-  cursor:pointer;vertical-align:middle;user-select:none;transition:background 0.15s,color 0.15s;white-space:nowrap;}
-.copy-btn:hover{background:rgba(255,183,0,0.2);border-color:var(--amber);}
-.copy-btn.copied{background:var(--green-dim);border-color:rgba(0,255,136,0.4);color:var(--green);}
 .working-badge{display:none;font-family:var(--mono);font-size:9px;padding:1px 8px;border-radius:10px;
   background:var(--amber-dim);border:1px solid rgba(255,183,0,0.4);color:var(--amber);
   vertical-align:middle;user-select:none;animation:workingPulse 1.2s ease-in-out infinite;}
@@ -155,15 +150,43 @@ html,body{background:var(--bg);color:var(--text);font-family:var(--ui);font-size
 .cat-btn:hover{color:var(--text);border-color:var(--border-bright);}
 .cat-btn.active{border-color:var(--amber);color:var(--amber);background:var(--amber-dim);}
 .cat-btn.all-btn.active{border-color:var(--cyan);color:var(--cyan);background:var(--cyan-dim);}
+/* Right-click excluded state — only visible in ALL mode. Muted red + strikethrough. */
+.cat-btn.excluded{
+  color:var(--red);border-color:rgba(255,68,68,0.4);background:var(--red-dim);
+  text-decoration:line-through;text-decoration-thickness:1px;opacity:0.75;
+}
+.cat-btn.excluded::before{content:"✕ ";font-weight:600;text-decoration:none;display:inline-block;}
+.cat-btn.excluded:hover{color:var(--red);border-color:var(--red);opacity:1;}
+/* Hint text below category rows */
+.cat-hint{font-family:var(--mono);font-size:9px;color:var(--text-dim);letter-spacing:0.04em;margin-top:4px;padding-left:2px;}
+.cat-hint b{color:var(--text-muted);font-weight:normal;}
 
 /* Route matrix */
 .route-matrix-wrap{margin-top:10px;}
-.route-matrix-label{font-family:var(--mono);font-size:9px;color:var(--text-muted);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:6px;display:flex;align-items:center;gap:10px;cursor:pointer;user-select:none;}
-.route-matrix-label:hover{color:var(--text-muted);}
-.route-matrix-toggle{font-size:9px;color:var(--text-dim);transition:transform 0.2s;display:inline-block;margin-right:2px;}
+.route-matrix-label{
+  font-family:var(--mono);font-size:10px;color:var(--cyan);letter-spacing:0.08em;text-transform:uppercase;
+  display:flex;align-items:center;gap:10px;cursor:pointer;user-select:none;
+  padding:8px 14px;border:1px solid var(--cyan-mid);border-radius:3px;
+  background:linear-gradient(180deg, rgba(0,200,255,0.08), rgba(0,200,255,0.03));
+  box-shadow:0 1px 0 rgba(0,200,255,0.18) inset, 0 2px 6px rgba(0,0,0,0.25);
+  transition:all 0.15s ease;margin-bottom:0;font-weight:600;
+}
+.route-matrix-label:hover{
+  color:var(--cyan);border-color:var(--cyan);
+  background:linear-gradient(180deg, rgba(0,200,255,0.14), rgba(0,200,255,0.06));
+  box-shadow:0 1px 0 rgba(0,200,255,0.25) inset, 0 4px 10px rgba(0,200,255,0.15);
+  transform:translateY(-1px);
+}
+.route-matrix-label.open{
+  border-color:var(--cyan);
+  background:linear-gradient(180deg, rgba(0,200,255,0.10), rgba(0,200,255,0.04));
+  box-shadow:0 0 0 1px var(--cyan-mid), 0 2px 6px rgba(0,0,0,0.3);
+  margin-bottom:8px;
+}
+.route-matrix-toggle{font-size:10px;color:var(--cyan);transition:transform 0.2s;display:inline-block;margin-right:2px;}
 .route-matrix-toggle.open{transform:rotate(90deg);}
-.route-matrix-actions{display:flex;gap:5px;}
-.route-matrix-act{font-family:var(--mono);font-size:9px;padding:2px 7px;border:1px solid var(--border);border-radius:2px;cursor:pointer;color:var(--text-muted);background:transparent;transition:all 0.15s;}
+.route-matrix-actions{display:flex;gap:5px;margin-left:auto;}
+.route-matrix-act{font-family:var(--mono);font-size:9px;padding:3px 8px;border:1px solid var(--border-bright);border-radius:2px;cursor:pointer;color:var(--text-muted);background:var(--bg);transition:all 0.15s;}
 .route-matrix-act:hover{color:var(--cyan);border-color:var(--cyan);}
 .route-matrix{display:inline-grid;gap:0;border:1px solid var(--border);border-radius:3px;overflow:hidden;}
 .rm-header-cell{font-family:var(--mono);font-size:9px;color:var(--text-muted);padding:5px 8px;background:var(--surface2);text-align:center;letter-spacing:0.06em;border-right:1px solid var(--border);border-bottom:1px solid var(--border);}
@@ -231,6 +254,16 @@ tr.expanded-row td{background:var(--surface2);padding:0;border-bottom:2px solid 
 .pct-mid{color:var(--amber);}
 .pct-low{color:var(--text-muted);}
 .profit-val{color:var(--green);}
+/* Click-to-copy item names (matches Market Supply tool pattern).
+   Amber on hover, green flash with '✓ copied' badge when activated. */
+.item-name.copyable{cursor:pointer;position:relative;user-select:none;transition:color 0.15s;}
+.item-name.copyable:hover{color:var(--amber);}
+.item-name.copyable.copied{color:var(--green);}
+.item-name.copyable.copied::after{
+  content:"✓ copied";position:absolute;right:0;top:50%;transform:translateY(-50%);
+  font-family:var(--mono);font-size:9px;font-weight:600;color:var(--green);
+  background:var(--bg);padding:1px 6px;border:1px solid var(--green);border-radius:2px;
+  pointer-events:none;letter-spacing:0.04em;}
 /* Velocity multiplier tag — shown next to score. Color reflects market flow: */
 /* green = demand outpaces supply (fast-moving), amber = balanced, muted = oversupplied */
 .vel-tag{display:inline-block;margin-left:6px;font-family:var(--mono);font-size:9px;padding:1px 5px;
@@ -425,28 +458,29 @@ tr.row-crossed:hover td{background:rgba(255,215,0,0.10) !important;}
 
       <div class="cat-row" style="margin-top:8px;">
         <span class="hub-label">Categories:</span>
-        <button class="cat-btn all-btn active" data-cat="all" onclick="toggleCat(this)">ALL</button>
-        <button class="cat-btn" data-cat="4"    onclick="toggleCat(this)">MATERIALS</button>
-        <button class="cat-btn" data-cat="25"   onclick="toggleCat(this)">ASTEROID</button>
-        <button class="cat-btn" data-cat="8"    onclick="toggleCat(this)">CHARGES</button>
-        <button class="cat-btn" data-cat="7"    onclick="toggleCat(this)">MODULES</button>
-        <button class="cat-btn" data-cat="157"  onclick="toggleCat(this)">RIGS</button>
-        <button class="cat-btn" data-cat="18"   onclick="toggleCat(this)">DRONES</button>
-        <button class="cat-btn" data-cat="87"   onclick="toggleCat(this)">FIGHTERS</button>
-        <button class="cat-btn" data-cat="11"   onclick="toggleCat(this)">IMPLANTS</button>
-        <button class="cat-btn" data-cat="16"   onclick="toggleCat(this)">SKILLS</button>
-        <button class="cat-btn" data-cat="17"   onclick="toggleCat(this)">COMMODITY</button>
-        <button class="cat-btn" data-cat="9"    onclick="toggleCat(this)">BLUEPRINTS</button>
-        <button class="cat-btn" data-cat="35"   onclick="toggleCat(this)">DECRYPTORS</button>
-        <button class="cat-btn" data-cat="22"   onclick="toggleCat(this)">DEPLOYABLE</button>
-        <button class="cat-btn" data-cat="32"   onclick="toggleCat(this)">SUBSYSTEMS</button>
-        <button class="cat-btn" data-cat="ships" onclick="toggleCat(this)">SHIPS</button>
-        <button class="cat-btn" data-cat="23"   onclick="toggleCat(this)">STRUCTURES</button>
-        <button class="cat-btn" data-cat="34"   onclick="toggleCat(this)">STR. MODULES</button>
-        <button class="cat-btn" data-cat="91"   onclick="toggleCat(this)">SKINS</button>
-        <button class="cat-btn" data-cat="2100" onclick="toggleCat(this)">EXPERT SYS.</button>
-        <button class="cat-btn" data-cat="30"   onclick="toggleCat(this)">APPAREL</button>
+        <button class="cat-btn all-btn active" data-cat="all" onclick="toggleCat(this)" oncontextmenu="excludeCat(this,event)">ALL</button>
+        <button class="cat-btn" data-cat="4"    onclick="toggleCat(this)" oncontextmenu="excludeCat(this,event)">MATERIALS</button>
+        <button class="cat-btn" data-cat="25"   onclick="toggleCat(this)" oncontextmenu="excludeCat(this,event)">ASTEROID</button>
+        <button class="cat-btn" data-cat="8"    onclick="toggleCat(this)" oncontextmenu="excludeCat(this,event)">CHARGES</button>
+        <button class="cat-btn" data-cat="7"    onclick="toggleCat(this)" oncontextmenu="excludeCat(this,event)">MODULES</button>
+        <button class="cat-btn" data-cat="157"  onclick="toggleCat(this)" oncontextmenu="excludeCat(this,event)">RIGS</button>
+        <button class="cat-btn" data-cat="18"   onclick="toggleCat(this)" oncontextmenu="excludeCat(this,event)">DRONES</button>
+        <button class="cat-btn" data-cat="87"   onclick="toggleCat(this)" oncontextmenu="excludeCat(this,event)">FIGHTERS</button>
+        <button class="cat-btn" data-cat="11"   onclick="toggleCat(this)" oncontextmenu="excludeCat(this,event)">IMPLANTS</button>
+        <button class="cat-btn" data-cat="16"   onclick="toggleCat(this)" oncontextmenu="excludeCat(this,event)">SKILLS</button>
+        <button class="cat-btn" data-cat="17"   onclick="toggleCat(this)" oncontextmenu="excludeCat(this,event)">COMMODITY</button>
+        <button class="cat-btn" data-cat="9"    onclick="toggleCat(this)" oncontextmenu="excludeCat(this,event)">BLUEPRINTS</button>
+        <button class="cat-btn" data-cat="35"   onclick="toggleCat(this)" oncontextmenu="excludeCat(this,event)">DECRYPTORS</button>
+        <button class="cat-btn" data-cat="22"   onclick="toggleCat(this)" oncontextmenu="excludeCat(this,event)">DEPLOYABLE</button>
+        <button class="cat-btn" data-cat="32"   onclick="toggleCat(this)" oncontextmenu="excludeCat(this,event)">SUBSYSTEMS</button>
+        <button class="cat-btn" data-cat="ships" onclick="toggleCat(this)" oncontextmenu="excludeCat(this,event)">SHIPS</button>
+        <button class="cat-btn" data-cat="23"   onclick="toggleCat(this)" oncontextmenu="excludeCat(this,event)">STRUCTURES</button>
+        <button class="cat-btn" data-cat="34"   onclick="toggleCat(this)" oncontextmenu="excludeCat(this,event)">STR. MODULES</button>
+        <button class="cat-btn" data-cat="91"   onclick="toggleCat(this)" oncontextmenu="excludeCat(this,event)">SKINS</button>
+        <button class="cat-btn" data-cat="2100" onclick="toggleCat(this)" oncontextmenu="excludeCat(this,event)">EXPERT SYS.</button>
+        <button class="cat-btn" data-cat="30"   onclick="toggleCat(this)" oncontextmenu="excludeCat(this,event)">APPAREL</button>
       </div>
+      <div class="cat-hint"><b>Tip:</b> left-click to select categories · <b>right-click</b> in ALL mode to exclude a category (✕)</div>
     </div>
 
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
@@ -489,19 +523,19 @@ tr.row-crossed:hover td{background:rgba(255,215,0,0.10) !important;}
       <table id="resultsTable">
         <thead><tr>
           <th style="width:28px"></th>
-          <th style="width:17%" onclick="sortTable('name')">Item <span class="sort-arrow" id="sort-name"></span></th>
+          <th style="width:18%" onclick="sortTable('name')">Item <span class="sort-arrow" id="sort-name"></span></th>
           <th style="width:7%" onclick="sortTable('category')">Category <span class="sort-arrow" id="sort-category"></span></th>
-          <th style="width:12%" onclick="sortTable('route')">Route <span class="sort-arrow" id="sort-route"></span></th>
+          <th style="width:11%" onclick="sortTable('route')">Route <span class="sort-arrow" id="sort-route"></span></th>
           <th style="width:7%" onclick="sortTable('buyPrice')">Sell Price <span class="sort-arrow" id="sort-buyPrice"></span></th>
           <th style="width:8%" onclick="sortTable('sellVolume')"><span class="th-depth-wrap">Sell Volume <span class="sort-arrow" id="sort-sellVolume"></span><span class="depth-info">i</span><div class="depth-tip"><div class="depth-tip-title">Sell Volume</div><div class="depth-tip-body">Total units for sale at the origin hub's main station across all sell orders. This is how many units you can actually buy at the listed price. Compare against your cargo capacity to estimate how many trips are needed to clear the opportunity.</div></div></span></th>
           <th style="width:6%" onclick="sortTable('sellDays')"><span class="th-depth-wrap">Sell Days <span class="sort-arrow" id="sort-sellDays"></span><span class="depth-info">i</span><div class="depth-tip"><div class="depth-tip-title">Sell Days</div><div class="depth-tip-body">Days of supply at the origin station at the current average daily sell rate. Sell Volume ÷ Sell Avg. Lower = more competitive market; higher = slower turnover.</div></div></span></th>
           <th style="width:7%" onclick="sortTable('sellAvg')"><span id="volColHeader">7d</span> Sell Avg <span class="sort-arrow" id="sort-sellAvg"></span></th>
           <th style="width:7%" onclick="sortTable('sellPrice')">Dest Price <span class="sort-arrow" id="sort-sellPrice"></span></th>
           <th style="width:6%" onclick="sortTable('margin')" class="sorted">Margin % <span class="sort-arrow" id="sort-margin">▼</span></th>
-          <th style="width:8%" onclick="sortTable('profit')">Profit/Unit <span class="sort-arrow" id="sort-profit"></span></th>
-          <th style="width:8%" onclick="sortTable('tripProfit')">Trip Profit <span class="sort-arrow" id="sort-tripProfit"></span></th>
-          <th style="width:6%" onclick="sortTable('score')"><span class="th-score-wrap">Score <span class="sort-arrow" id="sort-score"></span><span class="score-info">i</span><div class="score-tip"><div class="score-tip-title">Opportunity Score</div><div class="score-tip-formula">log₁₀(sell avg) × margin% × 100</div><div class="score-tip-body">Combines liquidity and profitability. High score = high volume AND high margin.<br><br><b style="color:var(--green)">×N velocity tag:</b> Sell Avg ÷ Sell Volume. Green &gt; 1 = demand outpaces supply (fast-moving). Amber 0.3-1 = balanced. Muted &lt; 0.3 = oversupplied.</div></div></span></th>
-          <th style="width:4%"></th>
+          <th style="width:7%" onclick="sortTable('profit')">Profit/Unit <span class="sort-arrow" id="sort-profit"></span></th>
+          <th style="width:7%" onclick="sortTable('tripProfit')">Trip Profit <span class="sort-arrow" id="sort-tripProfit"></span></th>
+          <th style="width:5%" onclick="sortTable('score')"><span class="th-score-wrap">Score <span class="sort-arrow" id="sort-score"></span><span class="score-info">i</span><div class="score-tip"><div class="score-tip-title">Opportunity Score</div><div class="score-tip-formula">log₁₀(sell avg) × margin% × 100</div><div class="score-tip-body">Combines liquidity and profitability. High score = high volume AND high margin. Sort the Velocity column separately to rank by how fast stock drains.</div></div></span></th>
+          <th style="width:5%" onclick="sortTable('velocity')"><span class="th-score-wrap">Velocity <span class="sort-arrow" id="sort-velocity"></span><span class="score-info">i</span><div class="score-tip"><div class="score-tip-title">Velocity Multiplier</div><div class="score-tip-formula">Sell Avg ÷ Sell Volume</div><div class="score-tip-body">How many times per day the current stock fully turns over. Green &gt; 1 = demand outpaces supply (fast-moving). Amber 0.3-1 = balanced. Muted &lt; 0.3 = oversupplied.</div></div></span></th>
         </tr></thead>
         <tbody id="resultsBody">
           <tr><td colspan="14"><div style="text-align:center;padding:3rem;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Bulk region fetch — all orders pulled in one pass per hub<br>Results include Sell Volume, Sell Days, and 1d/7d/30d volume windows<br>Click SCAN ALL to begin</div></td></tr>
@@ -546,28 +580,29 @@ tr.row-crossed:hover td{background:rgba(255,215,0,0.10) !important;}
       </div>
       <div class="cat-row" style="margin-top:8px;">
         <span class="hub-label">Categories:</span>
-        <button class="cat-btn all-btn active" data-st-cat="all"   onclick="stToggleCat(this)">ALL</button>
-        <button class="cat-btn" data-st-cat="4"    onclick="stToggleCat(this)">MATERIALS</button>
-        <button class="cat-btn" data-st-cat="25"   onclick="stToggleCat(this)">ASTEROID</button>
-        <button class="cat-btn" data-st-cat="8"    onclick="stToggleCat(this)">CHARGES</button>
-        <button class="cat-btn" data-st-cat="7"    onclick="stToggleCat(this)">MODULES</button>
-        <button class="cat-btn" data-st-cat="157"  onclick="stToggleCat(this)">RIGS</button>
-        <button class="cat-btn" data-st-cat="18"   onclick="stToggleCat(this)">DRONES</button>
-        <button class="cat-btn" data-st-cat="87"   onclick="stToggleCat(this)">FIGHTERS</button>
-        <button class="cat-btn" data-st-cat="11"   onclick="stToggleCat(this)">IMPLANTS</button>
-        <button class="cat-btn" data-st-cat="16"   onclick="stToggleCat(this)">SKILLS</button>
-        <button class="cat-btn" data-st-cat="17"   onclick="stToggleCat(this)">COMMODITY</button>
-        <button class="cat-btn" data-st-cat="9"    onclick="stToggleCat(this)">BLUEPRINTS</button>
-        <button class="cat-btn" data-st-cat="35"   onclick="stToggleCat(this)">DECRYPTORS</button>
-        <button class="cat-btn" data-st-cat="22"   onclick="stToggleCat(this)">DEPLOYABLE</button>
-        <button class="cat-btn" data-st-cat="32"   onclick="stToggleCat(this)">SUBSYSTEMS</button>
-        <button class="cat-btn" data-st-cat="ships" onclick="stToggleCat(this)">SHIPS</button>
-        <button class="cat-btn" data-st-cat="23"   onclick="stToggleCat(this)">STRUCTURES</button>
-        <button class="cat-btn" data-st-cat="34"   onclick="stToggleCat(this)">STR. MODULES</button>
-        <button class="cat-btn" data-st-cat="91"   onclick="stToggleCat(this)">SKINS</button>
-        <button class="cat-btn" data-st-cat="2100" onclick="stToggleCat(this)">EXPERT SYS.</button>
-        <button class="cat-btn" data-st-cat="30"   onclick="stToggleCat(this)">APPAREL</button>
+        <button class="cat-btn all-btn active" data-st-cat="all"   onclick="stToggleCat(this)" oncontextmenu="stExcludeCat(this,event)">ALL</button>
+        <button class="cat-btn" data-st-cat="4"    onclick="stToggleCat(this)" oncontextmenu="stExcludeCat(this,event)">MATERIALS</button>
+        <button class="cat-btn" data-st-cat="25"   onclick="stToggleCat(this)" oncontextmenu="stExcludeCat(this,event)">ASTEROID</button>
+        <button class="cat-btn" data-st-cat="8"    onclick="stToggleCat(this)" oncontextmenu="stExcludeCat(this,event)">CHARGES</button>
+        <button class="cat-btn" data-st-cat="7"    onclick="stToggleCat(this)" oncontextmenu="stExcludeCat(this,event)">MODULES</button>
+        <button class="cat-btn" data-st-cat="157"  onclick="stToggleCat(this)" oncontextmenu="stExcludeCat(this,event)">RIGS</button>
+        <button class="cat-btn" data-st-cat="18"   onclick="stToggleCat(this)" oncontextmenu="stExcludeCat(this,event)">DRONES</button>
+        <button class="cat-btn" data-st-cat="87"   onclick="stToggleCat(this)" oncontextmenu="stExcludeCat(this,event)">FIGHTERS</button>
+        <button class="cat-btn" data-st-cat="11"   onclick="stToggleCat(this)" oncontextmenu="stExcludeCat(this,event)">IMPLANTS</button>
+        <button class="cat-btn" data-st-cat="16"   onclick="stToggleCat(this)" oncontextmenu="stExcludeCat(this,event)">SKILLS</button>
+        <button class="cat-btn" data-st-cat="17"   onclick="stToggleCat(this)" oncontextmenu="stExcludeCat(this,event)">COMMODITY</button>
+        <button class="cat-btn" data-st-cat="9"    onclick="stToggleCat(this)" oncontextmenu="stExcludeCat(this,event)">BLUEPRINTS</button>
+        <button class="cat-btn" data-st-cat="35"   onclick="stToggleCat(this)" oncontextmenu="stExcludeCat(this,event)">DECRYPTORS</button>
+        <button class="cat-btn" data-st-cat="22"   onclick="stToggleCat(this)" oncontextmenu="stExcludeCat(this,event)">DEPLOYABLE</button>
+        <button class="cat-btn" data-st-cat="32"   onclick="stToggleCat(this)" oncontextmenu="stExcludeCat(this,event)">SUBSYSTEMS</button>
+        <button class="cat-btn" data-st-cat="ships" onclick="stToggleCat(this)" oncontextmenu="stExcludeCat(this,event)">SHIPS</button>
+        <button class="cat-btn" data-st-cat="23"   onclick="stToggleCat(this)" oncontextmenu="stExcludeCat(this,event)">STRUCTURES</button>
+        <button class="cat-btn" data-st-cat="34"   onclick="stToggleCat(this)" oncontextmenu="stExcludeCat(this,event)">STR. MODULES</button>
+        <button class="cat-btn" data-st-cat="91"   onclick="stToggleCat(this)" oncontextmenu="stExcludeCat(this,event)">SKINS</button>
+        <button class="cat-btn" data-st-cat="2100" onclick="stToggleCat(this)" oncontextmenu="stExcludeCat(this,event)">EXPERT SYS.</button>
+        <button class="cat-btn" data-st-cat="30"   onclick="stToggleCat(this)" oncontextmenu="stExcludeCat(this,event)">APPAREL</button>
       </div>
+      <div class="cat-hint"><b>Tip:</b> left-click to select categories · <b>right-click</b> in ALL mode to exclude a category (✕)</div>
     </div>
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
       <span class="working-badge" id="stWorkingBadge">⬡ WORKING</span>
@@ -605,7 +640,7 @@ tr.row-crossed:hover td{background:rgba(255,215,0,0.10) !important;}
           <th onclick="sortStTable('sellOrders')">Sell Orders <span class="sort-arrow" id="st-sort-sellOrders"></span></th>
           <th onclick="sortStTable('buyOrders')">Buy Orders <span class="sort-arrow" id="st-sort-buyOrders"></span></th>
           <th onclick="sortStTable('score')">Score <span class="sort-arrow" id="st-sort-score"></span></th>
-          <th></th>
+          <th onclick="sortStTable('velocity')">Velocity <span class="sort-arrow" id="st-sort-velocity"></span></th>
         </tr></thead>
         <tbody id="stBody">
           <tr><td colspan="14"><div style="text-align:center;padding:3rem;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Select a station and click SCAN<br><br><span style="color:var(--cyan)">NORMAL</span>: buy at bid · wait · sell 0.01 ISK below ask<br><span style="color:var(--gold)">INSTANT ⚡</span>: someone is bidding MORE than others are asking — buy from the sell order, sell to the buy order, zero wait</div></td></tr>
@@ -730,18 +765,33 @@ function catLabel(categoryId) {
 }
 
 // Shared category filter
-function applyCatFilter(results, cats) {
-  if (cats.has('all')) return results;
-  const allowedCatIds = new Set();
-  cats.forEach(cat => {
-    const id = CAT_ID_MAP[cat];
-    if (id != null) {
-      allowedCatIds.add(id);
-      // IMPLANTS button (cat '11') also covers legacy cat 20
-      if (id === 11) allowedCatIds.add(20);
-    }
-  });
-  return results.filter(r => r.categoryId != null && allowedCatIds.has(r.categoryId));
+function applyCatFilter(results, cats, excluded) {
+  // Specific categories selected → strict inclusion list (excluded set is ignored)
+  if (!cats.has('all')) {
+    const allowedCatIds = new Set();
+    cats.forEach(cat => {
+      const id = CAT_ID_MAP[cat];
+      if (id != null) {
+        allowedCatIds.add(id);
+        // IMPLANTS button (cat '11') also covers legacy cat 20
+        if (id === 11) allowedCatIds.add(20);
+      }
+    });
+    return results.filter(r => r.categoryId != null && allowedCatIds.has(r.categoryId));
+  }
+  // ALL mode — apply excluded list if any. Items without categoryId pass through.
+  if (excluded && excluded.size) {
+    const excludedIds = new Set();
+    excluded.forEach(cat => {
+      const id = CAT_ID_MAP[cat];
+      if (id != null) {
+        excludedIds.add(id);
+        if (id === 11) excludedIds.add(20);  // match the IMPLANTS alias
+      }
+    });
+    return results.filter(r => r.categoryId == null || !excludedIds.has(r.categoryId));
+  }
+  return results;
 }
 
 // group_id → category_id cache. Populated lazily via /universe/groups/{id}/.
@@ -1116,6 +1166,9 @@ let scanActive = false, stopFlag = false;
 let currentSort = 'margin', currentDir = -1;
 let showNewOnly = false, scanStartTime = 0, expandedRow = null;
 let selectedCats = new Set(['all']);
+// Categories explicitly excluded in ALL mode (right-click to toggle).
+// Ignored when specific categories are selected (use normal toggle for those).
+let excludedCats = new Set();
 
 // ============================================================
 // VOLUME WINDOW HELPERS
@@ -1167,7 +1220,34 @@ function toggleCat(btn) {
   }
   // Re-apply category filter from full scan results immediately
   if (scanAllResults.length) {
-    allResults = applyCatFilter(scanAllResults, selectedCats);
+    allResults = applyCatFilter(scanAllResults, selectedCats, excludedCats);
+    updateTripProfits();
+    applyFilter();
+  }
+}
+
+// Right-click a category button to EXCLUDE it in ALL mode — lets users keep
+// the broad ALL view but hide a single noisy category (e.g., Apparel, Skins).
+// Only active when ALL is the current selection; does nothing otherwise.
+function excludeCat(btn, event) {
+  event.preventDefault();
+  event.stopPropagation();
+  const cat = btn.dataset.cat;
+  if (cat === 'all') return; // Can't exclude "all" itself
+  if (!selectedCats.has('all')) {
+    // In specific-cat mode the exclusion concept doesn't apply — just flash a hint
+    btn.animate([{transform:'translateX(0)'},{transform:'translateX(-3px)'},
+                 {transform:'translateX(3px)'},{transform:'translateX(0)'}],
+                {duration:200});
+    return;
+  }
+  if (excludedCats.has(cat)) {
+    excludedCats.delete(cat); btn.classList.remove('excluded');
+  } else {
+    excludedCats.add(cat); btn.classList.add('excluded');
+  }
+  if (scanAllResults.length) {
+    allResults = applyCatFilter(scanAllResults, selectedCats, excludedCats);
     updateTripProfits();
     applyFilter();
   }
@@ -1273,9 +1353,11 @@ function setSymmetricRoutes() {
 function toggleRouteMatrix() {
   const body    = document.getElementById('routeMatrixBody');
   const toggle  = document.getElementById('routeMatrixToggle');
+  const label   = document.querySelector('.route-matrix-label');
   const isOpen  = toggle.classList.contains('open');
   body.style.display   = isOpen ? 'none' : '';
   toggle.classList.toggle('open', !isOpen);
+  if (label) label.classList.toggle('open', !isOpen);
 }
 
 function toggleHaulCalc() {
@@ -1306,22 +1388,27 @@ function setProgress(pct, text, sub) {
   document.getElementById('progressText').textContent = text;
   document.getElementById('progressPct').textContent = sub || '';
 }
-function copyName(el, name) {
-  navigator.clipboard.writeText(name).then(() => {
-    el.textContent = 'COPIED!';
-    el.classList.add('copied');
-    setTimeout(() => { el.textContent = 'COPY'; el.classList.remove('copied'); }, 1500);
-  }).catch(() => {
-    // Fallback for browsers without clipboard API
+// Click-to-copy for item names — matches Market Supply tool pattern.
+// Delegates from the document so it works for all current and future rows
+// without re-binding on every render. Reads name from data-copy-text attr.
+document.addEventListener('click', async (e) => {
+  const cell = e.target.closest('.item-name.copyable');
+  if (!cell) return;
+  const text = cell.getAttribute('data-copy-text');
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    // Fallback for non-HTTPS contexts / older browsers
     const ta = document.createElement('textarea');
-    ta.value = name; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
     document.body.appendChild(ta); ta.select();
-    document.execCommand('copy');
+    try { document.execCommand('copy'); } catch {}
     document.body.removeChild(ta);
-    el.textContent = 'COPIED!'; el.classList.add('copied');
-    setTimeout(() => { el.textContent = 'COPY'; el.classList.remove('copied'); }, 1500);
-  });
-}
+  }
+  cell.classList.add('copied');
+  setTimeout(() => cell.classList.remove('copied'), 1200);
+});
 
 function fmtISK(v) {
   if (v == null || isNaN(v)) return '—';
@@ -1347,17 +1434,22 @@ function fmtBytes(b) {
 // > 1.0  → market drains faster than it's stocked (green, high demand)
 // 0.3-1  → roughly balanced daily turnover (amber)
 // < 0.3  → oversupplied relative to demand (muted)
-// Returns an HTML snippet ready to inject next to a score cell.
+// Returns the raw numeric value, or null if it can't be computed.
+function velocityValue(r) {
+  const vol = r.volume || 0;
+  const sv  = r.sellVolume || 0;
+  if (!vol || !sv) return null;
+  return vol / sv;
+}
+// Returns an HTML snippet — the colored ×N tag. Empty string when uncomputable.
 function formatVelocityTag(r) {
-  const vol = r.volume || 0;          // current-window daily avg (Sell Avg)
-  const sv  = r.sellVolume || 0;      // units currently for sale at station
-  if (!vol || !sv) return '';
-  const v = vol / sv;
+  const v = velocityValue(r);
+  if (v == null) return '';
   const cls = v >= 1.0 ? 'vel-high' : v >= 0.3 ? 'vel-mid' : 'vel-low';
   const label = v >= 100  ? v.toFixed(0) :
                 v >= 10   ? v.toFixed(1) :
                             v.toFixed(2);
-  return `<span class="vel-tag ${cls}" title="Velocity = Sell Avg ÷ Sell Volume (${vol.toLocaleString()}/d ÷ ${sv.toLocaleString()})">×${label}</span>`;
+  return `<span class="vel-tag ${cls}" title="Velocity = Sell Avg ÷ Sell Volume (${(r.volume||0).toLocaleString()}/d ÷ ${(r.sellVolume||0).toLocaleString()})">×${label}</span>`;
 }
 function oppKey(r) { return `${r.typeId}-${r.buyHubId}-${r.sellHubId}`; }
 
@@ -1631,7 +1723,7 @@ async function startScan() {
   // ── STEP 5: Apply category filter ─────────────────────────────────────
   // Store full results — live category filtering happens in applyFilter()
   scanAllResults = filtered;
-  allResults = applyCatFilter(filtered, selectedCats);
+  allResults = applyCatFilter(filtered, selectedCats, excludedCats);
   updateTripProfits(cargo);
   updateBestMetrics();
   applyFilter();
@@ -1700,7 +1792,7 @@ function toggleNewOnly() {
 }
 
 function applyFilter() {
-  const base = applyCatFilter(scanAllResults.length ? scanAllResults : allResults, selectedCats);
+  const base = applyCatFilter(scanAllResults.length ? scanAllResults : allResults, selectedCats, excludedCats);
   filteredResults = base.filter(r => {
     if (!selectedRoutes.has(routeKey(r.buyHubId, r.sellHubId))) return false;
     if (showNewOnly && !r.isNew) return false;
@@ -1734,6 +1826,11 @@ function renderTable() {
       if (currentSort === 'sellDays') return r.sellDays == null ? -1 : r.sellDays;
       if (currentSort === 'sellVolume') return r.sellVolume || 0;
       if (currentSort === 'buyPrice') return r.buyPrice || 0;
+      if (currentSort === 'velocity') {
+        // Null velocity (no data) sorts to the bottom regardless of direction
+        const v = velocityValue(r);
+        return v == null ? -1 : v;
+      }
       return r[currentSort] || 0;
     };
     const av = getKey(a), bv = getKey(b);
@@ -1761,7 +1858,7 @@ function renderTable() {
     const sellDaysStr = r.sellDays == null ? '—' : r.sellDays.toFixed(1) + 'd';
     return `<tr class="${rowCls}" data-key="${key}" onclick="toggleExpand('${key}',${r.typeId})">
       <td><span class="watchstar" onclick="event.stopPropagation();toggleWatch(${JSON.stringify(r).replace(/"/g,'&quot;')})">${isWatched?'★':'☆'}</span></td>
-      <td><div class="item-name" title="${name}">${newFlag}${name}</div></td>
+      <td><div class="item-name copyable" title="${name} — click to copy" data-copy-text="${name.replace(/"/g,'&quot;')}" onclick="event.stopPropagation()">${newFlag}${name}</div></td>
       <td style="color:var(--text-muted);font-size:10px">${catLabel(r.categoryId)}</td>
       <td><span class="hub-pill ${bCls}">${r.buyHubName}</span><span class="arrow">→</span><span class="hub-pill ${sCls}">${r.sellHubName}</span></td>
       <td>${fmtISK(r.buyPrice)}</td>
@@ -1772,8 +1869,8 @@ function renderTable() {
       <td class="${mCls}">${mPct}%</td>
       <td class="profit-val">${fmtISK(r.profit)}</td>
       <td style="color:var(--gold)">${fmtISK(r.tripProfit)}</td>
-      <td style="color:var(--text-muted)">${r.score.toFixed(0)}${formatVelocityTag(r)}</td>
-      <td><span class="copy-btn" onclick="event.stopPropagation();copyName(this,'${name.replace(/'/g,"\\'")}')">COPY</span></td>
+      <td style="color:var(--text-muted)">${r.score.toFixed(0)}</td>
+      <td>${formatVelocityTag(r) || '<span style="color:var(--text-dim)">—</span>'}</td>
     </tr>`;
   }).join('');
 }
@@ -1952,6 +2049,8 @@ let currentStVolWindow = parseInt(localStorage.getItem('eve-arb-st-vol-window'))
 // instant arbitrage (bid >= ask at same station).
 let currentStTypeFilter = 'all';
 let stSelectedCats = new Set(['all']);
+// Station-tab excluded categories — only effective in ALL mode
+let stExcludedCats = new Set();
 let stScanAllResults = []; // unfiltered station scan output for live re-filtering
 
 function stToggleCat(btn) {
@@ -1969,7 +2068,31 @@ function stToggleCat(btn) {
     } else { stSelectedCats.add(cat); btn.classList.add('active'); }
   }
   if (stScanAllResults.length) {
-    stResults = applyCatFilter(stScanAllResults, stSelectedCats);
+    stResults = applyCatFilter(stScanAllResults, stSelectedCats, stExcludedCats);
+    document.getElementById('tab-st-count').textContent = stResults.length;
+    renderStTable();
+  }
+}
+
+// Station Trading counterpart — right-click to exclude in ALL mode.
+function stExcludeCat(btn, event) {
+  event.preventDefault();
+  event.stopPropagation();
+  const cat = btn.dataset.stCat;
+  if (cat === 'all') return;
+  if (!stSelectedCats.has('all')) {
+    btn.animate([{transform:'translateX(0)'},{transform:'translateX(-3px)'},
+                 {transform:'translateX(3px)'},{transform:'translateX(0)'}],
+                {duration:200});
+    return;
+  }
+  if (stExcludedCats.has(cat)) {
+    stExcludedCats.delete(cat); btn.classList.remove('excluded');
+  } else {
+    stExcludedCats.add(cat); btn.classList.add('excluded');
+  }
+  if (stScanAllResults.length) {
+    stResults = applyCatFilter(stScanAllResults, stSelectedCats, stExcludedCats);
     document.getElementById('tab-st-count').textContent = stResults.length;
     renderStTable();
   }
@@ -2273,7 +2396,7 @@ async function startStationScan() {
 
   // ── Apply category filter + store for live re-filtering ───────────────
   stScanAllResults = passing;
-  stResults = applyCatFilter(passing, stSelectedCats);
+  stResults = applyCatFilter(passing, stSelectedCats, stExcludedCats);
   document.getElementById('tab-st-count').textContent = stResults.length;
   stSetProgress(100, `Complete — ${stResults.length} opportunities`, '100%');
   stLog(`COMPLETE · ${stResults.length} station trade opportunities at ${hub.name}`);
@@ -2324,6 +2447,10 @@ function renderStTable() {
       if (stCurrentSort === 'sellAvg')    return r.volume || 0;
       if (stCurrentSort === 'sellDays')   return r.sellDays == null ? -1 : r.sellDays;
       if (stCurrentSort === 'sellVolume') return r.sellVolume || 0;
+      if (stCurrentSort === 'velocity')   {
+        const v = velocityValue(r);
+        return v == null ? -1 : v;
+      }
       return r[stCurrentSort] || 0;
     };
     const av = getKey(a), bv = getKey(b);
@@ -2363,7 +2490,7 @@ function renderStTable() {
       : `<span class="tt-badge tt-normal">NORMAL</span>`;
     return `<tr class="${rowClass}">
       <td>${typeBadge}</td>
-      <td><div class="item-name" title="${r.name}">${r.name}</div></td>
+      <td><div class="item-name copyable" title="${r.name} — click to copy" data-copy-text="${r.name.replace(/"/g,'&quot;')}">${r.name}</div></td>
       <td style="color:var(--text-muted);font-size:10px">${catLabel(r.categoryId)}</td>
       <td>${fmtISK(r.buyNow)}</td>
       <td>${fmtISK(r.sellNow)}</td>
@@ -2374,8 +2501,8 @@ function renderStTable() {
       <td>${fmtVol(r.volume)}${r.volume ? '/d' : ''}</td>
       <td>${r.sellOrders}</td>
       <td style="color:var(--text-muted)">${r.buyOrders}</td>
-      <td style="color:var(--text-muted)">${r.score.toFixed(0)}${formatVelocityTag(r)}</td>
-      <td><span class="copy-btn" onclick="event.stopPropagation();copyName(this,'${r.name.replace(/'/g,"\\'")}')">COPY</span></td>
+      <td style="color:var(--text-muted)">${r.score.toFixed(0)}</td>
+      <td>${formatVelocityTag(r) || '<span style="color:var(--text-dim)">—</span>'}</td>
     </tr>`;
   }).join('');
 }
