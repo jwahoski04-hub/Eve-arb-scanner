@@ -2923,6 +2923,7 @@ async function startScan() {
   Object.values(regionOrderMaps).forEach(m => m.forEach((_, tid) => allKnownTypeIds.add(tid)));
 
   let gapsFilled = 0;
+  let gapFailedTotal = 0;
   for (const hubId of hubs) {
     if (stopFlag) break;
     const hub  = HUBS[hubId];
@@ -2935,30 +2936,46 @@ async function startScan() {
     if (!missingHere.length) continue;
     log(`${hub.name}: bulk missed ${missingHere.length} typeIds — fetching individually...`);
 
-    for (let i = 0; i < missingHere.length && !stopFlag; i += 50) {
-      const batch = missingHere.slice(i, i + 50);
-      await Promise.all(batch.map(async tid => {
+    // Bounded worker pool — 6 concurrent per hub (not 50). Previous 50-wide
+    // batches saturated Firefox's connection pool and caused silent timeouts
+    // that left gap-fill accomplishing very little.
+    const GAP_CONC = 6;
+    let gapIdx = 0;
+    let hubFilled = 0;
+    let hubFailed = 0;
+    async function gapWorker() {
+      while (gapIdx < missingHere.length && !stopFlag) {
+        const tid = missingHere[gapIdx++];
         try {
-          const resp = await fetch(
-            withUAUrl(`https://esi.evetech.net/latest/markets/${hubId}/orders/?order_type=sell&type_id=${tid}`),
-            { headers: withUA() }
+          const resp = await fetchWithTimeout(
+            `https://esi.evetech.net/latest/markets/${hubId}/orders/?order_type=sell&type_id=${tid}`,
+            25000
           );
-          if (!resp.ok) return;
+          if (!resp.ok) { hubFailed++; continue; }
+          parseRateHeaders(resp.headers);
           const orders = await resp.json();
           const stationOrders = orders.filter(o =>
             Number(o.location_id) === hub.station &&
             Number(o.system_id)   === hub.system  &&
             !o.is_buy_order
           );
-          if (!stationOrders.length) return;
+          if (!stationOrders.length) continue;
           stationOrders.sort((a, b) => Number(a.price) - Number(b.price));
           const depth = stationOrders.reduce((s, o) => s + Number(o.volume_remain), 0);
           tMap.set(tid, { sells: stationOrders, buys: [], depth });
-          gapsFilled++;
-        } catch(e) {}
-      }));
+          hubFilled++;
+        } catch(e) { hubFailed++; }
+      }
     }
-    if (gapsFilled > 0) log(`Gap-fill complete: added ${gapsFilled} items to station maps`);
+    await Promise.all(Array.from({ length: GAP_CONC }, gapWorker));
+    gapsFilled += hubFilled;
+    gapFailedTotal += hubFailed;
+    if (hubFilled > 0 || hubFailed > 0) {
+      log(`${hub.name} gap-fill: added ${hubFilled} items · ${hubFailed} failed`);
+    }
+  }
+  if (gapsFilled > 0 || gapFailedTotal > 0) {
+    log(`Gap-fill total: ${gapsFilled} items added across all hubs · ${gapFailedTotal} failures`);
   }
   }  // end ESI-only gap-fill block
   log('RUNNING CROSS-HUB PRICE COMPARISON...');
@@ -4251,34 +4268,52 @@ async function startStationScan() {
   const missingIds = allTypeIds.filter(id => !typeMap.has(id));
   stLog(`Gap-fill: ${allTypeIds.length.toLocaleString()} active types · ${missingIds.length.toLocaleString()} missing from bulk — fetching...`);
 
-  // Fetch missing items in parallel batches of 50
-  for (let i = 0; i < missingIds.length && !stStopFlag; i += 50) {
-    const batch = missingIds.slice(i, i + 50);
-    stSetProgress(25 + (i / missingIds.length) * 15,
-      `Gap-fill: ${i}/${missingIds.length} items...`, '');
-    await Promise.all(batch.map(async typeId => {
+  // Fetch missing items with a bounded worker pool. Previously ran 50 parallel
+  // fetches per batch which exhausted Firefox's connection pool to ESI —
+  // most requests would get queued internally, time out, fail silently via
+  // the catch({}) below, and leave gap-fill with almost nothing filled.
+  // Concurrency of 6 matches the main bulk fetch's proven-safe level.
+  const GAP_CONC = 6;
+  let gapIdx = 0;
+  let gapCompleted = 0;   // finished fetches (success OR failure)
+  let gapSucceeded = 0;   // returned usable data
+  let gapFailed = 0;      // threw or returned non-OK response
+  async function gapWorker() {
+    while (gapIdx < missingIds.length && !stStopFlag) {
+      const typeId = missingIds[gapIdx++];
       try {
-        const resp = await fetch(
-          withUAUrl(`https://esi.evetech.net/latest/markets/${hubId}/orders/?order_type=all&type_id=${typeId}`),
-          { headers: withUA() }
+        const resp = await fetchWithTimeout(
+          `https://esi.evetech.net/latest/markets/${hubId}/orders/?order_type=all&type_id=${typeId}`,
+          25000
         );
-        if (!resp.ok) return;
+        if (!resp.ok) { gapFailed++; gapCompleted++; continue; }
+        parseRateHeaders(resp.headers);
         const itemOrders = await resp.json();
         const stationOrders = itemOrders.filter(o =>
           Number(o.location_id) === hub.station
         );
-        if (!stationOrders.length) return;
-        if (!typeMap.has(typeId)) typeMap.set(typeId, { sells:[], buys:[] });
-        const e = typeMap.get(typeId);
-        for (const o of stationOrders) {
-          if (o.is_buy_order) e.buys.push(o);
-          else e.sells.push(o);
+        if (stationOrders.length) {
+          if (!typeMap.has(typeId)) typeMap.set(typeId, { sells:[], buys:[] });
+          const e = typeMap.get(typeId);
+          for (const o of stationOrders) {
+            if (o.is_buy_order) e.buys.push(o);
+            else e.sells.push(o);
+          }
+          e.sells.sort((a,b) => Number(a.price) - Number(b.price));
+          e.buys.sort((a,b)  => Number(b.price) - Number(a.price));
+          gapSucceeded++;
         }
-        e.sells.sort((a,b) => Number(a.price) - Number(b.price));
-        e.buys.sort((a,b)  => Number(b.price) - Number(a.price));
-      } catch(e) {}
-    }));
+      } catch(e) { gapFailed++; }
+      gapCompleted++;
+      if (gapCompleted % 25 === 0) {
+        const pct = 25 + (gapCompleted / missingIds.length) * 15;
+        stSetProgress(pct,
+          `Gap-fill: ${gapCompleted}/${missingIds.length} items (${gapSucceeded} with orders)`, '');
+      }
+    }
   }
+  await Promise.all(Array.from({ length: GAP_CONC }, gapWorker));
+  stLog(`Gap-fill complete: ${gapCompleted}/${missingIds.length} checked · ${gapSucceeded} added to typeMap · ${gapFailed} failed (network/timeout)`);
   stLog(`${hub.name}: ${typeMap.size.toLocaleString()} items after gap-fill`);
   }  // end ESI-only gap-fill block
 
