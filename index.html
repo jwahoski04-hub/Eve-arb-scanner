@@ -2450,7 +2450,7 @@ const DS_DESCRIPTIONS = {
 const ST_DS_DESCRIPTIONS = {
   'esi':  '<b>Raw ESI:</b> Full region dump filtered to this station — slowest, most precise.',
   'top':  '<b>Top 2000:</b> Per-item ESI query for core + learned items. Moderate speed, station-level precision.',
-  'fuzz': '<b>Fuzzwork:</b> Pre-aggregated data pinned to this station, batched 200 items per request. Fastest mode, scans the full market universe (~15-20k items). <span style="color:var(--amber)">Data may be up to ~30 min stale.</span>'
+  'fuzz': '<b>Fuzzwork:</b> Pre-aggregated data to discover candidates across the full universe, then <b>ESI-verified</b> per-item to drop citadel/structure mirages and correct stale prices. Balanced speed and accuracy.'
 };
 
 function setDataSource(mode) {
@@ -4378,11 +4378,146 @@ async function startStationScan() {
   }
   if (stStopFlag) { stFinish(); return; }
 
+  // ── Step 3b: FUZZWORK VERIFICATION PASS ─────────────────────────────
+  // Fuzzwork's ?station= parameter is not strict — it leaks in data from
+  // nearby citadels and structures when the real NPC station doesn't have
+  // distinct aggregates. So a "Jita" opportunity from Fuzzwork might
+  // actually reflect prices at Perimeter TTT, which isn't actionable for
+  // someone trading at Jita IV-4.
+  //
+  // For Station Trading, we fix this by re-fetching each candidate's real
+  // orders from ESI (which respects location_id strictly) and:
+  //   - Dropping candidates whose bid OR ask doesn't exist at the NPC station
+  //   - Re-running the spread calculation with verified ESI prices
+  //   - Re-applying ROI/profit filters against the corrected values
+  //
+  // Only runs in FUZZ mode. ESI and TOP modes already fetch station-precise
+  // data and don't need verification.
+  let verifiedCandidates = candidates;
+  if (stDataSource === 'fuzz') {
+    stLog(`VERIFYING ${candidates.length} Fuzzwork candidates against live ESI...`);
+    stSetProgress(42, `Verifying ${candidates.length} candidates against ESI...`, '');
+    const verifyStart = Date.now();
+    const verifiedMap = {}; // typeId → {askMin, bidMax, sellVol, buyVol, sellOrders, buyOrders}
+    const toVerify = [...new Set(candidates.map(c => c.typeId))];
+    let verified = 0;
+    const VERIFY_CONC = 8;
+    let vIdx = 0;
+    async function verifyWorker() {
+      while (vIdx < toVerify.length && !stStopFlag) {
+        const tid = toVerify[vIdx++];
+        try {
+          const resp = await fetchWithTimeout(
+            `https://esi.evetech.net/latest/markets/${hubId}/orders/?order_type=all&type_id=${tid}`,
+            20000
+          );
+          if (resp.ok) {
+            parseRateHeaders(resp.headers);
+            const orders = await resp.json();
+            // Hard filter: only orders at THIS specific NPC station
+            const stOrders = orders.filter(o => Number(o.location_id) === hub.station);
+            const sells = stOrders.filter(o => !o.is_buy_order).sort((a,b) => a.price - b.price);
+            const buys  = stOrders.filter(o =>  o.is_buy_order).sort((a,b) => b.price - a.price);
+            verifiedMap[tid] = {
+              askMin: sells[0] ? Number(sells[0].price) : null,
+              bidMax: buys[0]  ? Number(buys[0].price)  : null,
+              sellVol: sells.reduce((s,o) => s + Number(o.volume_remain), 0),
+              buyVol:  buys.reduce((s,o)  => s + Number(o.volume_remain), 0),
+              sellOrders: sells.length,
+              buyOrders:  buys.length,
+              // Grab the volume_remain of the touch orders for crossed flip calc
+              topSellVol: sells[0] ? Number(sells[0].volume_remain) : 0,
+              topBuyVol:  buys[0]  ? Number(buys[0].volume_remain)  : 0,
+            };
+          }
+        } catch(e) {}
+        verified++;
+        if (verified % 25 === 0) {
+          const pct = 42 + (verified / toVerify.length) * 18; // 42-60% for verification
+          stSetProgress(pct, `Verifying ${verified}/${toVerify.length} candidates...`, `${pct.toFixed(0)}%`);
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: VERIFY_CONC }, verifyWorker));
+
+    if (stStopFlag) { stFinish(); return; }
+
+    // Now filter and correct the candidate list. Re-run the spread logic
+    // against verified prices so we get accurate ROI/profit with real data.
+    let rejected = 0;        // had Fuzzwork spread but not at NPC station
+    let priceCorrected = 0;  // survived but with different prices than Fuzzwork showed
+    let newlyFailROI = 0;    // survived station check but no longer clears ROI/profit
+    verifiedCandidates = [];
+    for (const c of candidates) {
+      const v = verifiedMap[c.typeId];
+      if (!v || v.askMin == null || v.bidMax == null) {
+        rejected++;
+        continue;
+      }
+      const lowestAsk  = v.askMin;
+      const highestBid = v.bidMax;
+      // Re-run the same spread calculation we used earlier, but with ESI prices
+      let buyNow, sellNow, net, roi, tradeType, flipUnits = null;
+      if (lowestAsk <= highestBid) {
+        // Crossed market — instant arbitrage
+        buyNow    = highestBid;
+        sellNow   = lowestAsk;
+        net       = highestBid - lowestAsk - (highestBid * tax);
+        roi       = net / lowestAsk;
+        tradeType = 'crossed';
+        flipUnits = Math.min(v.topSellVol, v.topBuyVol);
+        if (net <= 0 || roi < minROI || net < minProfit) { newlyFailROI++; continue; }
+      } else {
+        // Normal spread — patient station trade
+        buyNow    = highestBid;
+        sellNow   = lowestAsk;
+        const yourSell = lowestAsk - 0.01;
+        net       = (yourSell - highestBid) - (yourSell * tax);
+        roi       = net / highestBid;
+        tradeType = 'normal';
+        if (roi < minROI || net < minProfit) { newlyFailROI++; continue; }
+      }
+      // Track whether the prices actually changed vs. Fuzzwork's numbers
+      if (Math.abs(c.buyNow - buyNow) > 0.01 || Math.abs(c.sellNow - sellNow) > 0.01) {
+        priceCorrected++;
+      }
+      // Keep the candidate, overwriting the Fuzzwork-sourced values with
+      // verified ESI values
+      verifiedCandidates.push({
+        ...c,
+        buyNow, sellNow, roi,
+        profitPerUnit: net,
+        tradeType,
+        flipUnits,
+        sellVolume: v.sellVol,
+        buyVolume:  v.buyVol,
+        sellOrders: v.sellOrders,
+        buyOrders:  v.buyOrders,
+        _verified: true,
+      });
+    }
+    const elapsed = ((Date.now() - verifyStart) / 1000).toFixed(1);
+    stLog(`Verification: ${verifiedCandidates.length} kept · ${rejected} rejected (no NPC-station spread) · ${newlyFailROI} failed ROI after correction · ${priceCorrected} prices corrected · ${elapsed}s`);
+
+    if (!verifiedCandidates.length) {
+      stSetProgress(100, 'No verified candidates — most were citadel/structure mirages', '100%');
+      stResults = [];
+      stScanAllResults = [];
+      document.getElementById('tab-st-count').textContent = '0';
+      renderStTable();
+      stFinish();
+      return;
+    }
+  }
+
+  // From here on, use verifiedCandidates (which is === candidates in non-Fuzz modes)
+  if (stStopFlag) { stFinish(); return; }
+
   // ── Step 4: History (20 workers) — capture all three volume windows ──
   // One fetch per typeId returns full history; we compute v1/v7/v30 from it
   // so the 1d/7d/30d toggle can switch between them without rescanning.
-  stLog(`Fetching history for ${candidates.length} candidates (all windows)...`);
-  const uniqueIds = [...new Set(candidates.map(c => c.typeId))];
+  stLog(`Fetching history for ${verifiedCandidates.length} candidates (all windows)...`);
+  const uniqueIds = [...new Set(verifiedCandidates.map(c => c.typeId))];
   let fetched = 0;
   const tasks = uniqueIds.map(typeId => async () => {
     if (stStopFlag) return;
@@ -4394,7 +4529,7 @@ async function startStationScan() {
       );
       if (Array.isArray(hist) && hist.length) {
         const win = computeVolumeWindows(hist);
-        candidates.filter(c => c.typeId===typeId).forEach(c => {
+        verifiedCandidates.filter(c => c.typeId===typeId).forEach(c => {
           c.dailyVol1  = win.v1;
           c.dailyVol7  = win.v7;
           c.dailyVol30 = win.v30;
@@ -4407,9 +4542,15 @@ async function startStationScan() {
       }
     } catch(e) {}
     fetched++;
-    if (fetched % 20 === 0)
-      stSetProgress(42+(fetched/uniqueIds.length)*40,
+    if (fetched % 20 === 0) {
+      // Progress: 60-82% reserved for history (42-60% was verification for
+      // Fuzzwork mode; in ESI/TOP modes verification is skipped so we effectively
+      // jump from 42 to 60 instantly, which is fine)
+      const histStart = stDataSource === 'fuzz' ? 60 : 42;
+      const histEnd   = 82;
+      stSetProgress(histStart + (fetched/uniqueIds.length) * (histEnd - histStart),
         `History: ${fetched}/${uniqueIds.length}`, `${((fetched/uniqueIds.length)*100).toFixed(0)}%`);
+    }
   });
   let ti = 0;
   async function stHistWorker() { while (ti<tasks.length && !isStopped()) await tasks[ti++](); }
@@ -4420,7 +4561,7 @@ async function startStationScan() {
   // ── Step 5: Filter by vol, score, resolve names ───────────────────────
   stSetProgress(85, 'Resolving names...', '85%');
   let stDormantStripped = 0;
-  const passing = candidates.filter(c => {
+  const passing = verifiedCandidates.filter(c => {
     // Dormancy filter — drops items with zero volume in the selected window
     if (stDormantFilter !== 'off') {
       const check = stDormantFilter === '1d'  ? c.dailyVol1  :
@@ -4433,7 +4574,7 @@ async function startStationScan() {
     return true;
   });
   if (stDormantStripped > 0) stLog(`Dormant filter: removed ${stDormantStripped} items with zero ${stDormantFilter} volume`);
-  stLog(`Volume filter: ${passing.length}/${candidates.length} passed min vol ${minVol}`);
+  stLog(`Volume filter: ${passing.length}/${verifiedCandidates.length} passed min vol ${minVol}`);
 
   const resolveIds = [...new Set(passing.map(c => c.typeId))];
   const { nameMap, catMap } = await batchResolveNames(resolveIds);
