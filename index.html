@@ -507,7 +507,10 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
   background:var(--bg-0);border:1px solid var(--border-ds);
   object-fit:contain;
 }
-.item-cell .item-name{flex:1;min-width:0;white-space:normal;line-height:1.35;word-break:break-word;}
+/* Name takes natural width only — NOT flex:1. This leaves empty space
+   to the right of the name clickable for row-expand (Hub Trading) while
+   keeping the copy hit-target scoped to the actual text. */
+.item-cell .item-name{min-width:0;white-space:normal;line-height:1.35;word-break:break-word;max-width:100%;}
 /* Gold ⚡ glyph for crossed markets in Station Trading — inline with item name */
 .crossed-glyph{
   display:inline-block;color:var(--gold);font-size:12px;margin-right:6px;
@@ -938,6 +941,7 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
     <div class="results-wrap">
       <table id="stTable">
         <thead><tr>
+          <th style="width:28px"></th>
           <th onclick="sortStTable('name')">Item <span class="sort-arrow" id="st-sort-name"></span></th>
           <th onclick="sortStTable('category')">Category <span class="sort-arrow" id="st-sort-category"></span></th>
           <th onclick="sortStTable('buyNow')">Buy Order At <span class="sort-arrow" id="st-sort-buyNow"></span></th>
@@ -953,13 +957,36 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
           <th onclick="sortStTable('velocity')">Velocity <span class="sort-arrow" id="st-sort-velocity"></span></th>
         </tr></thead>
         <tbody id="stBody">
-          <tr><td colspan="13"><div style="text-align:center;padding:3rem;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Select a station and click SCAN<br><br>Place a buy order at the <span style="color:var(--cyan)">Buy Order At</span> price · wait to fill · list sell 0.01 ISK below <span style="color:var(--text)">Sell Order At</span><br>Crossed markets (where the bid is already above an ask) are highlighted in gold and marked with ⚡</div></td></tr>
+          <tr><td colspan="14"><div style="text-align:center;padding:3rem;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Select a station and click SCAN<br><br>Place a buy order at the <span style="color:var(--cyan)">Buy Order At</span> price · wait to fill · list sell 0.01 ISK below <span style="color:var(--text)">Sell Order At</span><br>Crossed markets (where the bid is already above an ask) are highlighted in gold and marked with ⚡</div></td></tr>
         </tbody>
       </table>
     </div>
   </div>
 
   <div class="panel" id="panel-watchlist">
+    <div class="controls-panel" style="padding:10px 14px;margin-bottom:0.75rem;">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <div style="font-family:var(--mono);font-size:11px;color:var(--cyan);letter-spacing:0.06em;">WATCHLIST</div>
+          <span style="font-family:var(--mono);font-size:10px;color:var(--text-muted);" id="wlCountText">—</span>
+          <span style="font-family:var(--mono);font-size:10px;color:var(--text-dim);">·</span>
+          <span style="font-family:var(--mono);font-size:10px;color:var(--text-muted);" id="wlLastScan">Last scan: —</span>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <button class="btn-scan" id="wlScanBtn" onclick="toggleWatchlistScan()" style="height:28px;padding:4px 12px;">▶ REFRESH DATA</button>
+          <button class="btn-stop" id="wlStopBtn" onclick="stopWatchlistScan()" style="display:none;height:28px;">■ STOP</button>
+          <button class="btn-sm" onclick="exportWatchlistCSV()">EXPORT CSV</button>
+          <button class="btn-sm" style="border-color:rgba(255,68,68,0.4);color:var(--red);" onclick="clearWatchlist()">CLEAR ALL</button>
+        </div>
+      </div>
+      <div class="progress-area" id="wl-progress-area" style="display:none;margin-top:10px;margin-bottom:0;">
+        <div class="progress-bar-wrap"><div class="progress-bar" id="wlProgressBar"></div></div>
+        <div class="progress-info">
+          <div class="progress-text" id="wlProgressText"></div>
+          <div class="progress-pct" id="wlProgressPct"></div>
+        </div>
+      </div>
+    </div>
     <div id="watchlistContent"></div>
   </div>
 
@@ -2299,7 +2326,50 @@ let allResults = [], filteredResults = [], scanAllResults = [];
 // Switches which dailyVol{1,7,30} field is used for display, filtering, and scoring.
 // Persists across sessions via localStorage.
 let currentVolWindow = parseInt(localStorage.getItem('eve-arb-vol-window')) || 7;
-let watchlist = JSON.parse(localStorage.getItem('eve-arb-wl') || '[]');
+// Watchlist is shared between Hub Trading and Station Trading.
+// Unified schema (v2):
+//   {
+//     id: "hub:typeId:buyHubId:sellHubId" | "station:typeId:stationHubId",
+//     entryType: "hub" | "station",
+//     typeId, name, categoryId,
+//     buyHubId, sellHubId, buyHubName, sellHubName,   // hub entries
+//     stationHubId, stationHubName,                    // station entries
+//     dataSource,                                      // original scan mode
+//     snapshots: [{at, ... }],                         // newest first
+//     addedAt
+//   }
+// Migrates legacy v1 entries (flat structure) on load.
+let watchlist = (function loadWatchlist() {
+  let raw;
+  try { raw = JSON.parse(localStorage.getItem('eve-arb-wl') || '[]'); }
+  catch { raw = []; }
+  if (!Array.isArray(raw)) return [];
+  return raw.map(w => {
+    // Already v2?
+    if (w.id && w.entryType && Array.isArray(w.snapshots)) return w;
+    // Legacy v1 — convert to hub entry with a single initial snapshot
+    return {
+      id: `hub:${w.typeId}:${w.buyHubId}:${w.sellHubId}`,
+      entryType: 'hub',
+      typeId: w.typeId,
+      name: w.name,
+      categoryId: w.categoryId ?? null,
+      buyHubId: w.buyHubId,
+      sellHubId: w.sellHubId,
+      buyHubName: w.buyHubName,
+      sellHubName: w.sellHubName,
+      dataSource: w.dataSource || 'esi',
+      snapshots: [{
+        at: w.addedAt || new Date().toISOString(),
+        buyPrice: w.buyPrice, sellPrice: w.sellPrice,
+        margin: w.margin, profit: w.profit,
+        volume: w.volume, sellVolume: w.sellVolume || w.depth || 0,
+        dataSource: w.dataSource || 'esi',
+      }],
+      addedAt: w.addedAt || new Date().toISOString(),
+    };
+  });
+})();
 let scanActive = false, stopFlag = false;
 let currentSort = 'margin', currentDir = -1;
 let scanStartTime = 0, expandedRow = null;
@@ -3179,7 +3249,7 @@ function renderTable() {
     const bCls      = HUBS[r.buyHubId]?.cls||'';
     const sCls      = HUBS[r.sellHubId]?.cls||'';
     const name      = r.name||`#${r.typeId}`;
-    const isWatched = watchlist.some(w=>w.typeId===r.typeId);
+    const isWatched = isHubWatched(r);
     const volBarW   = Math.max(4, Math.round((r.sellVolume||0)/maxSellVol*40));
     const rowCls    = i<3 ? 'top-row' : '';
     const sellDaysStr = r.sellDays == null ? '—' : r.sellDays.toFixed(1) + 'd';
@@ -3255,48 +3325,289 @@ function toggleExpand(key) {
 // ============================================================
 // WATCHLIST
 // ============================================================
-function toggleWatch(r) {
-  const idx = watchlist.findIndex(w => w.typeId===r.typeId && w.buyHubId===r.buyHubId && w.sellHubId===r.sellHubId);
-  if (idx >= 0) watchlist.splice(idx,1);
-  else watchlist.push({ typeId:r.typeId, name:r.name, buyHubId:r.buyHubId, sellHubId:r.sellHubId,
-    buyHubName:r.buyHubName, sellHubName:r.sellHubName, buyPrice:r.buyPrice, sellPrice:r.sellPrice,
-    profit:r.profit, margin:r.margin, volume:r.volume, addedAt:new Date().toISOString() });
-  localStorage.setItem('eve-arb-wl', JSON.stringify(watchlist));
-  updateWlBadge(); applyFilter();
+// ============================================================
+// WATCHLIST — unified between Hub Trading and Station Trading
+// ============================================================
+
+// Persist to localStorage.
+function saveWatchlist() {
+  try { localStorage.setItem('eve-arb-wl', JSON.stringify(watchlist)); } catch {}
 }
-function updateWlBadge() { document.getElementById('tab-wl-count').textContent = watchlist.length; }
+
+// Generate the unique ID for a hub-trading row. Directional — Jita→Amarr
+// and Amarr→Jita are distinct entries.
+function hubWatchId(typeId, buyHubId, sellHubId) {
+  return `hub:${typeId}:${buyHubId}:${sellHubId}`;
+}
+
+// Generate the unique ID for a station-trading row. One per type per station.
+function stationWatchId(typeId, stationHubId) {
+  return `station:${typeId}:${stationHubId}`;
+}
+
+// Hub Trading ☆ handler — toggles a hub-route entry in/out of the watchlist.
+function toggleWatch(r) {
+  const id = hubWatchId(r.typeId, r.buyHubId, r.sellHubId);
+  const idx = watchlist.findIndex(w => w.id === id);
+  if (idx >= 0) {
+    watchlist.splice(idx, 1);
+  } else {
+    watchlist.push({
+      id,
+      entryType: 'hub',
+      typeId: r.typeId,
+      name: r.name,
+      categoryId: r.categoryId ?? null,
+      buyHubId: r.buyHubId, sellHubId: r.sellHubId,
+      buyHubName: r.buyHubName, sellHubName: r.sellHubName,
+      dataSource: dataSource || 'esi',
+      snapshots: [{
+        at: new Date().toISOString(),
+        buyPrice: r.buyPrice, sellPrice: r.sellPrice,
+        margin: r.margin, profit: r.profit,
+        volume: r.volume || 0, sellVolume: r.sellVolume || 0,
+        dataSource: dataSource || 'esi',
+      }],
+      addedAt: new Date().toISOString(),
+    });
+  }
+  saveWatchlist();
+  updateWlBadge();
+  applyFilter();
+}
+
+// Station Trading ☆ handler — toggles a station-trade entry. Snapshots
+// the buy/sell order prices, ROI, spread, and volume so we can show deltas
+// when the user refreshes the watchlist.
+function stToggleWatch(r) {
+  const hub = HUBS[getStHub()];
+  const stationHubId = getStHub();
+  const id = stationWatchId(r.typeId, stationHubId);
+  const idx = watchlist.findIndex(w => w.id === id);
+  if (idx >= 0) {
+    watchlist.splice(idx, 1);
+  } else {
+    watchlist.push({
+      id,
+      entryType: 'station',
+      typeId: r.typeId,
+      name: r.name,
+      categoryId: r.categoryId ?? null,
+      stationHubId,
+      stationHubName: hub?.name || '?',
+      dataSource: stDataSource || 'esi',
+      snapshots: [{
+        at: new Date().toISOString(),
+        buyNow: r.buyNow, sellNow: r.sellNow,
+        roi: r.roi, profitPerUnit: r.profitPerUnit,
+        volume: r.volume || 0, sellVolume: r.sellVolume || 0,
+        buyOrders: r.buyOrders, sellOrders: r.sellOrders,
+        tradeType: r.tradeType,
+        dataSource: stDataSource || 'esi',
+      }],
+      addedAt: new Date().toISOString(),
+    });
+  }
+  saveWatchlist();
+  updateWlBadge();
+  renderStTable(); // re-render so the star updates
+}
+
+// Shared check — is THIS hub-trading row in the watchlist?
+function isHubWatched(r) {
+  return watchlist.some(w => w.id === hubWatchId(r.typeId, r.buyHubId, r.sellHubId));
+}
+
+// Shared check — is THIS station-trading row in the watchlist at the current station?
+function isStationWatched(r) {
+  return watchlist.some(w => w.id === stationWatchId(r.typeId, getStHub()));
+}
+
+function updateWlBadge() {
+  document.getElementById('tab-wl-count').textContent = watchlist.length;
+}
 function renderWatchlist() {
   const el = document.getElementById('watchlistContent');
+  // Update header count + last-scan timestamp badges in the controls panel
+  const countEl = document.getElementById('wlCountText');
+  if (countEl) countEl.textContent = watchlist.length ? `${watchlist.length} item${watchlist.length===1?'':'s'}` : 'no items';
+  updateWlLastScanBadge();
+
   if (!watchlist.length) {
-    el.innerHTML = `<div class="watchlist-empty">NO ITEMS WATCHED<br>Click ☆ on any result to add it to your watchlist</div>`;
+    el.innerHTML = `<div class="watchlist-empty">NO ITEMS WATCHED<br>Click ☆ on any result to add it to your watchlist<br><br>Hub Trading and Station Trading share this list — stars in both tabs reflect the same entries.</div>`;
     return;
   }
-  el.innerHTML = watchlist.map((w,i) => {
-    const bCls = HUBS[w.buyHubId]?.cls||'';
-    const sCls = HUBS[w.sellHubId]?.cls||'';
-    const mCls = w.margin>0.15?'pct-high':w.margin>0.08?'pct-mid':'pct-low';
-    return `<div class="wl-item">
-      <div style="flex:1">
-        <div class="wl-name">${w.name||`#${w.typeId}`}</div>
-        <div style="margin-top:4px;display:flex;gap:6px;align-items:center;">
-          <span class="hub-pill ${bCls}">${w.buyHubName}</span><span class="arrow">→</span>
-          <span class="hub-pill ${sCls}">${w.sellHubName}</span>
-          <span class="wl-meta" style="margin-left:8px;">Added ${new Date(w.addedAt).toLocaleDateString()}</span>
-        </div>
-      </div>
-      <div style="text-align:right">
-        <div class="wl-profit">${fmtISK(w.profit)} ISK</div>
-        <div class="wl-margin ${mCls}">${(w.margin*100).toFixed(1)}%</div>
-        <div class="wl-meta">${fmtVol(w.volume)}/day</div>
-      </div>
-      <button class="btn-sm" style="margin-left:8px;" onclick="removeWatch(${i})">✕</button>
-    </div>`;
-  }).join('');
+
+  // Sort: hub entries first, then station entries, then alphabetical by name within each group
+  const sorted = [...watchlist].sort((a, b) => {
+    if (a.entryType !== b.entryType) return a.entryType === 'hub' ? -1 : 1;
+    return (a.name || '').localeCompare(b.name || '');
+  });
+
+  el.innerHTML = `
+    <div class="results-wrap">
+      <table id="wlTable">
+        <thead><tr>
+          <th style="width:28px"></th>
+          <th style="width:22%;text-align:left;padding-left:12px;">Item</th>
+          <th>Type</th>
+          <th>Route / Station</th>
+          <th>Buy</th>
+          <th>Sell</th>
+          <th>Margin / ROI</th>
+          <th>Profit/Unit</th>
+          <th>Daily Vol</th>
+          <th>Mode</th>
+          <th>Last Refresh</th>
+          <th style="width:32px"></th>
+        </tr></thead>
+        <tbody>
+          ${sorted.map(w => renderWatchlistRow(w)).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
 }
-function removeWatch(i) {
-  watchlist.splice(i,1);
-  localStorage.setItem('eve-arb-wl', JSON.stringify(watchlist));
-  updateWlBadge(); renderWatchlist();
+
+// Compare the two newest snapshots on an entry to compute directional arrows
+// for each numeric field. Returns {} if there's only one snapshot (no delta
+// yet). Arrows are shown as ↑ green / ↓ red / = text-dim.
+function computeDeltas(w) {
+  if (!w.snapshots || w.snapshots.length < 2) return {};
+  // Find newest (highest `at`) and second-newest snapshots
+  const sortedSnaps = [...w.snapshots].sort((a, b) => new Date(b.at) - new Date(a.at));
+  const cur = sortedSnaps[0];
+  const prv = sortedSnaps[1];
+  const d = {};
+  const fields = ['buyPrice', 'sellPrice', 'margin', 'profit', 'volume',
+                  'buyNow', 'sellNow', 'roi', 'profitPerUnit', 'sellVolume'];
+  for (const f of fields) {
+    if (cur[f] == null || prv[f] == null) continue;
+    const delta = cur[f] - prv[f];
+    if (Math.abs(delta) < 1e-9) d[f] = 'flat';
+    else d[f] = delta > 0 ? 'up' : 'down';
+  }
+  return d;
+}
+
+// Arrow HTML for a delta direction. "up" is green, "down" is red; for some
+// fields (like buyPrice) going up is actually bad for us, but we color based
+// on raw direction and let the user interpret context. Keeps display neutral.
+function arrowHTML(direction, goodDir) {
+  if (!direction || direction === 'flat') return '<span style="color:var(--text-dim)">=</span>';
+  // goodDir='up' means upward movement is good (green); 'down' means downward is good
+  const isGood = direction === goodDir;
+  const color = isGood ? 'var(--green)' : 'var(--red)';
+  const glyph = direction === 'up' ? '↑' : '↓';
+  return `<span style="color:${color};font-weight:600;margin-left:4px;">${glyph}</span>`;
+}
+
+// Render a single watchlist row. Branches on entryType because the columns
+// mean different things: Hub entries have buyPrice/sellPrice across hubs;
+// Station entries have buyNow/sellNow at one station.
+function renderWatchlistRow(w) {
+  const snap = w.snapshots?.[w.snapshots.length - 1];
+  if (!snap) return '';
+  const deltas = computeDeltas(w);
+  const idEsc = w.id.replace(/'/g, "\\'");
+
+  // Last refresh — show relative time if snapshot is recent, else date
+  const snapAt = new Date(snap.at);
+  const ageMs = Date.now() - snapAt.getTime();
+  let lastRefresh;
+  if (ageMs < 60_000)         lastRefresh = 'just now';
+  else if (ageMs < 3_600_000) lastRefresh = `${Math.floor(ageMs/60_000)}m ago`;
+  else if (ageMs < 86_400_000)lastRefresh = `${Math.floor(ageMs/3_600_000)}h ago`;
+  else                        lastRefresh = snapAt.toLocaleDateString();
+  const hasMultipleSnaps = w.snapshots.length >= 2;
+  const refreshCls = hasMultipleSnaps ? 'color:var(--text)' : 'color:var(--text-muted)';
+
+  // Mode badge styling — color the data source per scan
+  const modeColor = snap.dataSource === 'fuzz' ? 'var(--purple)'
+                  : snap.dataSource === 'top'  ? 'var(--amber)'
+                  :                              'var(--cyan)';
+  const modeLabel = snap.dataSource === 'fuzz' ? 'FUZZ'
+                  : snap.dataSource === 'top'  ? 'TOP'
+                  :                              'ESI';
+
+  if (w.entryType === 'hub') {
+    const bCls = HUBS[w.buyHubId]?.cls || '';
+    const sCls = HUBS[w.sellHubId]?.cls || '';
+    const mCls = snap.margin > 0.15 ? 'pct-high' : snap.margin > 0.08 ? 'pct-mid' : 'pct-low';
+    return `<tr>
+      <td><span class="watchstar" style="color:var(--amber)" onclick="removeWatchById('${idEsc}')" title="Remove from watchlist">★</span></td>
+      <td style="text-align:left;padding-left:12px;"><div class="item-cell"><img class="item-icon" src="https://images.evetech.net/types/${w.typeId}/icon?size=32" width="24" height="24" alt="" loading="lazy" onerror="this.style.visibility='hidden'"><span class="item-name copyable" title="${w.name||'?'} — click to copy" data-copy-text="${(w.name||'').replace(/"/g,'&quot;')}">${w.name||`#${w.typeId}`}</span></div></td>
+      <td style="color:var(--cyan);font-size:10px;">HUB</td>
+      <td><span class="hub-pill ${bCls}">${w.buyHubName}</span><span class="arrow">→</span><span class="hub-pill ${sCls}">${w.sellHubName}</span></td>
+      <td>${fmtISK(snap.buyPrice)}${arrowHTML(deltas.buyPrice, 'down')}</td>
+      <td>${fmtISK(snap.sellPrice)}${arrowHTML(deltas.sellPrice, 'up')}</td>
+      <td class="${mCls}">${(snap.margin*100).toFixed(1)}%${arrowHTML(deltas.margin, 'up')}</td>
+      <td class="profit-val">${fmtISK(snap.profit)}${arrowHTML(deltas.profit, 'up')}</td>
+      <td>${fmtVol(snap.volume)}/d${arrowHTML(deltas.volume, 'up')}</td>
+      <td><span style="font-size:9px;padding:1px 5px;border:1px solid ${modeColor};color:${modeColor};border-radius:2px;">${modeLabel}</span></td>
+      <td style="${refreshCls};font-size:10px;">${lastRefresh}</td>
+      <td><button class="btn-sm" onclick="removeWatchById('${idEsc}')" title="Remove">✕</button></td>
+    </tr>`;
+  } else {
+    // Station entry
+    const sCls = HUBS[w.stationHubId]?.cls || '';
+    const rCls = snap.roi > 0.15 ? 'pct-high' : snap.roi > 0.08 ? 'pct-mid' : 'pct-low';
+    return `<tr>
+      <td><span class="watchstar" style="color:var(--amber)" onclick="removeWatchById('${idEsc}')" title="Remove from watchlist">★</span></td>
+      <td style="text-align:left;padding-left:12px;"><div class="item-cell"><img class="item-icon" src="https://images.evetech.net/types/${w.typeId}/icon?size=32" width="24" height="24" alt="" loading="lazy" onerror="this.style.visibility='hidden'"><span class="item-name copyable" title="${w.name||'?'} — click to copy" data-copy-text="${(w.name||'').replace(/"/g,'&quot;')}">${w.name||`#${w.typeId}`}</span></div></td>
+      <td style="color:var(--purple);font-size:10px;">STATION</td>
+      <td><span class="hub-pill ${sCls}">${w.stationHubName}</span></td>
+      <td>${fmtISK(snap.buyNow)}${arrowHTML(deltas.buyNow, 'up')}</td>
+      <td>${fmtISK(snap.sellNow)}${arrowHTML(deltas.sellNow, 'down')}</td>
+      <td class="${rCls}">${(snap.roi*100).toFixed(1)}%${arrowHTML(deltas.roi, 'up')}</td>
+      <td class="profit-val">${fmtISK(snap.profitPerUnit)}${arrowHTML(deltas.profitPerUnit, 'up')}</td>
+      <td>${fmtVol(snap.volume)}/d${arrowHTML(deltas.volume, 'up')}</td>
+      <td><span style="font-size:9px;padding:1px 5px;border:1px solid ${modeColor};color:${modeColor};border-radius:2px;">${modeLabel}</span></td>
+      <td style="${refreshCls};font-size:10px;">${lastRefresh}</td>
+      <td><button class="btn-sm" onclick="removeWatchById('${idEsc}')" title="Remove">✕</button></td>
+    </tr>`;
+  }
+}
+
+// Update the "Last scan: X" text in the watchlist header. Shows the oldest
+// snapshot time from the set of snapshots added by the most recent wl-scan.
+function updateWlLastScanBadge() {
+  const el = document.getElementById('wlLastScan');
+  if (!el) return;
+  const stamp = localStorage.getItem('eve-arb-wl-last-scan');
+  if (!stamp) { el.textContent = 'Last refresh: never'; return; }
+  const d = new Date(stamp);
+  const ageMs = Date.now() - d.getTime();
+  if      (ageMs < 60_000)    el.textContent = 'Last refresh: just now';
+  else if (ageMs < 3_600_000) el.textContent = `Last refresh: ${Math.floor(ageMs/60_000)}m ago`;
+  else if (ageMs < 86_400_000)el.textContent = `Last refresh: ${Math.floor(ageMs/3_600_000)}h ago · ${d.toLocaleTimeString()}`;
+  else                        el.textContent = `Last refresh: ${d.toLocaleString()}`;
+}
+
+// Remove by id rather than array index — safer given the list gets re-sorted
+// in the render. Also re-renders both tabs so the ★ changes back to ☆ there.
+function removeWatchById(id) {
+  const idx = watchlist.findIndex(w => w.id === id);
+  if (idx < 0) return;
+  watchlist.splice(idx, 1);
+  saveWatchlist();
+  updateWlBadge();
+  renderWatchlist();
+  // Refresh the main tabs so stars toggle back
+  if (scanAllResults.length || allResults.length) applyFilter();
+  if (stResults.length) renderStTable();
+}
+
+// Clear the entire watchlist with confirmation.
+function clearWatchlist() {
+  if (!watchlist.length) return;
+  if (!confirm(`Remove all ${watchlist.length} items from the watchlist? This can't be undone.`)) return;
+  watchlist = [];
+  saveWatchlist();
+  updateWlBadge();
+  renderWatchlist();
+  if (scanAllResults.length || allResults.length) applyFilter();
+  if (stResults.length) renderStTable();
 }
 
 // ============================================================
@@ -3362,6 +3673,348 @@ function exportCSV() {
   const a   = document.createElement('a');
   a.href    = URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
   a.download = `eve_arb_scanner_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+}
+
+// ============================================================
+// WATCHLIST SCAN — refresh each watched item's data and snapshot it
+// ============================================================
+//
+// For each watched item, fetches current prices + volumes from its stored
+// dataSource, then appends a new snapshot. After the scan, renderWatchlist
+// picks up deltas between the new snapshot and the prior one, showing ↑ ↓
+// arrows per field.
+//
+// Data sources:
+//   'fuzz' — batch-fetch via Fuzzwork aggregates (1 request per ~200 items)
+//   'esi' / 'top' — per-item ESI orders endpoint for prices, per-item history
+//     for volumes. Slower but station-precise.
+//
+// Volumes come from /markets/{region}/history/ (cached for 24h).
+// Category IDs come from batch name resolution if missing.
+
+let wlScanActive = false;
+let wlStopFlag = false;
+
+function toggleWatchlistScan() {
+  if (!wlScanActive) startWatchlistScan();
+}
+
+function stopWatchlistScan() {
+  wlStopFlag = true;
+  wlLog('Scan aborted');
+  wlFinish();
+}
+
+function wlLog(msg) {
+  const el = document.getElementById('wlProgressText');
+  if (el) el.textContent = msg;
+}
+
+function wlProgress(pct, text, sub) {
+  const bar = document.getElementById('wlProgressBar');
+  if (bar) bar.style.width = Math.min(100, pct) + '%';
+  if (text != null) wlLog(text);
+  const pctEl = document.getElementById('wlProgressPct');
+  if (pctEl) pctEl.textContent = sub || `${pct.toFixed(0)}%`;
+}
+
+function wlFinish() {
+  wlScanActive = false;
+  wlStopFlag = false;
+  const area = document.getElementById('wl-progress-area');
+  if (area) area.style.display = 'none';
+  document.getElementById('wlScanBtn').disabled = false;
+  document.getElementById('wlScanBtn').classList.remove('running');
+  document.getElementById('wlStopBtn').style.display = 'none';
+  renderWatchlist();
+}
+
+async function startWatchlistScan() {
+  if (!watchlist.length) {
+    alert('Add items to the watchlist first — click ☆ on any Hub or Station result.');
+    return;
+  }
+  // Honor the scan mutex — don't run a watchlist refresh while a main
+  // scan is active (they share connection pool + rate limits).
+  if (scanActive || stScanActive) {
+    alert('A Hub or Station scan is currently running. Wait for it to finish, then refresh the watchlist.');
+    return;
+  }
+
+  wlScanActive = true;
+  wlStopFlag = false;
+  document.getElementById('wlScanBtn').disabled = true;
+  document.getElementById('wlScanBtn').classList.add('running');
+  document.getElementById('wlStopBtn').style.display = '';
+  document.getElementById('wl-progress-area').style.display = '';
+  wlProgress(0, 'Starting watchlist refresh...', '');
+
+  // Split entries by (dataSource, regionId) so we can batch Fuzzwork requests
+  // per region. Hub entries touch TWO regions (buy + sell), so we split them
+  // into two "legs" — one for each side — and merge the results back.
+  //
+  // Leg structure:
+  //   { entry, side: 'buy'|'sell'|'station', regionId, typeId }
+  const legs = [];
+  for (const w of watchlist) {
+    if (w.entryType === 'hub') {
+      legs.push({ entry: w, side: 'buy',  regionId: w.buyHubId,  typeId: w.typeId });
+      legs.push({ entry: w, side: 'sell', regionId: w.sellHubId, typeId: w.typeId });
+    } else {
+      legs.push({ entry: w, side: 'station', regionId: w.stationHubId, typeId: w.typeId });
+    }
+  }
+
+  wlProgress(5, `Refreshing ${watchlist.length} items (${legs.length} price lookups)...`, '');
+
+  // Group legs by (dataSource, regionId) for batched Fuzzwork fetches.
+  // We bucket by the entry's stored dataSource so each item keeps using
+  // the mode it was originally added with.
+  const buckets = {};
+  for (const leg of legs) {
+    const mode = leg.entry.dataSource || 'esi';
+    const key = `${mode}:${leg.regionId}`;
+    (buckets[key] ||= []).push(leg);
+  }
+
+  // Price results collected per leg — keyed by "regionId:typeId" for easy
+  // lookup when assembling snapshots. Values: { askMin, bidMax, sellOrdersCount, buyOrdersCount, sellVolume, buyVolume }
+  const priceMap = {};
+  const priceKey = (rId, tId) => `${rId}:${tId}`;
+
+  let done = 0;
+  const totalLegs = legs.length;
+  const bumpProgress = () => {
+    done++;
+    // Reserve 5-60% of progress bar for price fetches
+    const pct = 5 + (done / totalLegs) * 55;
+    wlProgress(pct, `Fetching prices · ${done}/${totalLegs}`, '');
+  };
+
+  // ── PHASE 1: Fetch prices per bucket ──────────────────────────────
+  for (const [key, legList] of Object.entries(buckets)) {
+    if (wlStopFlag) break;
+    const [mode, regionIdStr] = key.split(':');
+    const regionId = parseInt(regionIdStr);
+    const hub = HUBS[regionId];
+    if (!hub) { legList.forEach(bumpProgress); continue; }
+
+    if (mode === 'fuzz') {
+      // Batch up to 200 typeIds per Fuzzwork request
+      const typeIds = [...new Set(legList.map(l => l.typeId))];
+      for (let i = 0; i < typeIds.length && !wlStopFlag; i += 200) {
+        const batch = typeIds.slice(i, i + 200);
+        try {
+          const url = `https://market.fuzzwork.co.uk/aggregates/?station=${hub.station}&types=${batch.join(',')}`;
+          const resp = await fetchWithTimeout(url, 20000);
+          if (resp.ok) {
+            const data = await resp.json();
+            for (const [tidStr, stats] of Object.entries(data)) {
+              const tid = parseInt(tidStr);
+              if (!stats) continue;
+              priceMap[priceKey(regionId, tid)] = {
+                askMin: parseFloat(stats.sell?.min) || 0,
+                bidMax: parseFloat(stats.buy?.max)  || 0,
+                sellVolume: parseFloat(stats.sell?.volume) || 0,
+                buyVolume:  parseFloat(stats.buy?.volume)  || 0,
+                sellOrdersCount: parseInt(stats.sell?.orderCount) || 0,
+                buyOrdersCount:  parseInt(stats.buy?.orderCount)  || 0,
+              };
+            }
+          }
+        } catch(e) {}
+        // Count all legs in this batch as done (we fetched them in one shot)
+        legList.filter(l => batch.includes(l.typeId)).forEach(bumpProgress);
+      }
+    } else {
+      // ESI / TOP mode — per-item orders fetch with moderate concurrency
+      const typeIds = [...new Set(legList.map(l => l.typeId))];
+      const CONC = 8;
+      let idx = 0;
+      async function worker() {
+        while (idx < typeIds.length && !wlStopFlag) {
+          const tid = typeIds[idx++];
+          try {
+            const url = `https://esi.evetech.net/latest/markets/${regionId}/orders/?order_type=all&type_id=${tid}`;
+            const resp = await fetchWithTimeout(url, 20000);
+            if (resp.ok) {
+              parseRateHeaders(resp.headers);
+              const orders = await resp.json();
+              const stationOrders = orders.filter(o => Number(o.location_id) === hub.station);
+              const sells = stationOrders.filter(o => !o.is_buy_order).sort((a,b) => a.price - b.price);
+              const buys  = stationOrders.filter(o =>  o.is_buy_order).sort((a,b) => b.price - a.price);
+              const sellVol = sells.reduce((s,o) => s + Number(o.volume_remain), 0);
+              const buyVol  = buys.reduce((s,o)  => s + Number(o.volume_remain), 0);
+              priceMap[priceKey(regionId, tid)] = {
+                askMin: sells[0] ? Number(sells[0].price) : 0,
+                bidMax: buys[0]  ? Number(buys[0].price)  : 0,
+                sellVolume: sellVol,
+                buyVolume:  buyVol,
+                sellOrdersCount: sells.length,
+                buyOrdersCount:  buys.length,
+              };
+            }
+          } catch(e) {}
+          // Every leg that matches this typeId in this bucket counts as done
+          legList.filter(l => l.typeId === tid).forEach(bumpProgress);
+        }
+      }
+      await Promise.all(Array.from({ length: CONC }, worker));
+    }
+  }
+
+  if (wlStopFlag) { wlFinish(); return; }
+
+  // ── PHASE 2: Fetch history (daily volumes) for each (region, typeId) ─
+  wlProgress(60, 'Fetching daily volumes...', '');
+  const histMap = {}; // `${regionId}:${typeId}` → {v1, v7, v30}
+  const historyLegs = [];
+  // For Hub entries we want history at the BUY hub (where we source); for
+  // Station entries we want history at the one station. That matches what
+  // the main scans use for volume reporting.
+  for (const w of watchlist) {
+    if (w.entryType === 'hub') {
+      historyLegs.push({ regionId: w.buyHubId, typeId: w.typeId });
+    } else {
+      historyLegs.push({ regionId: w.stationHubId, typeId: w.typeId });
+    }
+  }
+  const uniqueHistKeys = [...new Set(historyLegs.map(l => priceKey(l.regionId, l.typeId)))];
+  let histDone = 0;
+  const CONC_HIST = 15;
+  let histIdx = 0;
+  async function histWorker() {
+    while (histIdx < uniqueHistKeys.length && !wlStopFlag) {
+      const k = uniqueHistKeys[histIdx++];
+      const [rId, tId] = k.split(':').map(Number);
+      try {
+        const hist = await esiFetch(`https://esi.evetech.net/latest/markets/${rId}/history/?type_id=${tId}`);
+        if (Array.isArray(hist) && hist.length) histMap[k] = computeVolumeWindows(hist);
+      } catch(e) {}
+      histDone++;
+      // Reserve 60-95% of progress bar for history fetches
+      const pct = 60 + (histDone / uniqueHistKeys.length) * 35;
+      wlProgress(pct, `Volumes · ${histDone}/${uniqueHistKeys.length}`, '');
+    }
+  }
+  await Promise.all(Array.from({ length: CONC_HIST }, histWorker));
+
+  if (wlStopFlag) { wlFinish(); return; }
+
+  // ── PHASE 3: Build new snapshots and append to each entry ───────────
+  wlProgress(95, 'Computing deltas...', '');
+  const tax = parseFloat(document.getElementById('taxRate').value) / 100 || 0.036;
+  const stTax = parseFloat(document.getElementById('st-taxRate').value) / 100 || 0.036;
+  const nowISO = new Date().toISOString();
+
+  for (const w of watchlist) {
+    const histKey = w.entryType === 'hub' ? priceKey(w.buyHubId, w.typeId) : priceKey(w.stationHubId, w.typeId);
+    const hist = histMap[histKey] || { v1: 0, v7: 0, v30: 0 };
+    const vol = currentVolWindow === 1 ? hist.v1 : currentVolWindow === 30 ? hist.v30 : hist.v7;
+
+    if (w.entryType === 'hub') {
+      const buyData  = priceMap[priceKey(w.buyHubId,  w.typeId)];
+      const sellData = priceMap[priceKey(w.sellHubId, w.typeId)];
+      // If we couldn't fetch both sides, skip snapshot — don't pollute the
+      // history with partial data.
+      if (!buyData || !sellData || !buyData.askMin || !sellData.askMin) continue;
+      const buyPrice  = buyData.askMin;
+      const sellPrice = sellData.askMin;
+      const net       = (sellPrice - buyPrice) - (sellPrice * tax);
+      const margin    = net / buyPrice;
+      w.snapshots.push({
+        at: nowISO,
+        buyPrice, sellPrice, margin, profit: net,
+        volume: vol, sellVolume: buyData.sellVolume,
+        dataSource: w.dataSource,
+      });
+    } else {
+      const d = priceMap[priceKey(w.stationHubId, w.typeId)];
+      if (!d || !d.askMin || !d.bidMax) continue;
+      const lowestAsk  = d.askMin;
+      const highestBid = d.bidMax;
+      let buyNow, sellNow, net, roi, tradeType;
+      if (lowestAsk <= highestBid) {
+        // Crossed market — instant arbitrage
+        buyNow    = highestBid;
+        sellNow   = lowestAsk;
+        net       = highestBid - lowestAsk - (highestBid * stTax);
+        roi       = net / lowestAsk;
+        tradeType = 'crossed';
+      } else {
+        // Normal spread — patient station trading
+        buyNow    = highestBid;
+        sellNow   = lowestAsk;
+        const yourSell = lowestAsk - 0.01;
+        net       = (yourSell - highestBid) - (yourSell * stTax);
+        roi       = net / highestBid;
+        tradeType = 'normal';
+      }
+      w.snapshots.push({
+        at: nowISO,
+        buyNow, sellNow, roi,
+        profitPerUnit: net,
+        volume: vol, sellVolume: d.sellVolume,
+        buyOrders: d.buyOrdersCount, sellOrders: d.sellOrdersCount,
+        tradeType,
+        dataSource: w.dataSource,
+      });
+    }
+    // Cap snapshot history at 10 entries per item to keep localStorage lean
+    if (w.snapshots.length > 10) w.snapshots = w.snapshots.slice(-10);
+  }
+
+  saveWatchlist();
+  localStorage.setItem('eve-arb-wl-last-scan', nowISO);
+  wlProgress(100, `Refresh complete — ${watchlist.length} items updated`, '100%');
+  wlFinish();
+}
+
+// CSV export for watchlist — includes both hub and station entries with
+// their most-recent snapshot values. Previous-snapshot values included so
+// the user can see raw deltas when sorting in Excel.
+function exportWatchlistCSV() {
+  if (!watchlist.length) { alert('Watchlist is empty'); return; }
+  const headers = ['Type','Item','Type ID','Category','Route or Station',
+                   'Buy / BidBuy','Sell / AskSell','Margin %','Profit/Unit',
+                   'Daily Vol','Prev Buy','Prev Sell','Prev Margin %','Prev Profit',
+                   'Mode','Last Refresh','Added'];
+  const rows = watchlist.map(w => {
+    const snap = w.snapshots[w.snapshots.length - 1] || {};
+    const prev = w.snapshots.length >= 2 ? w.snapshots[w.snapshots.length - 2] : {};
+    if (w.entryType === 'hub') {
+      return [
+        'HUB', (w.name||'').replace(/,/g,''), w.typeId, catLabel(w.categoryId),
+        `${w.buyHubName}->${w.sellHubName}`,
+        (snap.buyPrice ?? 0).toFixed(2), (snap.sellPrice ?? 0).toFixed(2),
+        ((snap.margin ?? 0) * 100).toFixed(2), (snap.profit ?? 0).toFixed(2),
+        snap.volume || 0,
+        (prev.buyPrice ?? '').toString(), (prev.sellPrice ?? '').toString(),
+        prev.margin != null ? (prev.margin * 100).toFixed(2) : '',
+        (prev.profit ?? '').toString(),
+        (snap.dataSource || w.dataSource || 'esi').toUpperCase(),
+        snap.at || '', w.addedAt || '',
+      ].join(',');
+    } else {
+      return [
+        'STATION', (w.name||'').replace(/,/g,''), w.typeId, catLabel(w.categoryId),
+        w.stationHubName,
+        (snap.buyNow ?? 0).toFixed(2), (snap.sellNow ?? 0).toFixed(2),
+        ((snap.roi ?? 0) * 100).toFixed(2), (snap.profitPerUnit ?? 0).toFixed(2),
+        snap.volume || 0,
+        (prev.buyNow ?? '').toString(), (prev.sellNow ?? '').toString(),
+        prev.roi != null ? (prev.roi * 100).toFixed(2) : '',
+        (prev.profitPerUnit ?? '').toString(),
+        (snap.dataSource || w.dataSource || 'esi').toUpperCase(),
+        snap.at || '', w.addedAt || '',
+      ].join(',');
+    }
+  });
+  const csv = [headers.join(','), ...rows].join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  a.download = `eve_arb_watchlist_${new Date().toISOString().slice(0, 10)}.csv`;
   a.click();
 }
 
@@ -3830,7 +4483,7 @@ function renderStTable() {
   document.getElementById('stResultCount').textContent = `(${sorted.length})`;
   const tbody = document.getElementById('stBody');
   if (!sorted.length) {
-    tbody.innerHTML = `<tr><td colspan="13"><div style="text-align:center;padding:3rem;font-family:var(--mono);font-size:11px;color:var(--text-dim);">NO OPPORTUNITIES FOUND<br>Try setting Min ROI % and Min Profit ISK to 0 and scanning again</div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="14"><div style="text-align:center;padding:3rem;font-family:var(--mono);font-size:11px;color:var(--text-dim);">NO OPPORTUNITIES FOUND<br>Try setting Min ROI % and Min Profit ISK to 0 and scanning again</div></td></tr>`;
     return;
   }
   // Depth bars scale against the full-scan maximum (not the filtered/sorted
@@ -3842,11 +4495,13 @@ function renderStTable() {
     const sellDaysStr = r.sellDays == null ? '—' : r.sellDays.toFixed(1) + 'd';
     const isCrossed = r.tradeType === 'crossed';
     const rowClass  = isCrossed ? 'row-crossed' : '';
+    const isWatched = isStationWatched(r);
     // Inline ⚡ glyph for crossed markets — tooltip carries the flip-units info
     const crossedGlyph = isCrossed
       ? `<span class="crossed-glyph" title="Instant arbitrage — buy from sell order, sell to buy order. Up to ${(r.flipUnits||0).toLocaleString()} units flippable at the touch.">⚡</span>`
       : '';
     return `<tr class="${rowClass}">
+      <td><span class="watchstar" onclick="stToggleWatch(${JSON.stringify(r).replace(/"/g,'&quot;')})">${isWatched?'★':'☆'}</span></td>
       <td><div class="item-cell"><img class="item-icon" src="https://images.evetech.net/types/${r.typeId}/icon?size=32" width="24" height="24" alt="" loading="lazy" onerror="this.style.visibility='hidden'"><span class="item-name copyable" title="${r.name} — click to copy" data-copy-text="${r.name.replace(/"/g,'&quot;')}">${crossedGlyph}${r.name}</span></div></td>
       <td style="color:var(--text-muted);font-size:10px">${catLabel(r.categoryId)}</td>
       <td>${fmtISK(r.buyNow)}</td>
