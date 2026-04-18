@@ -174,6 +174,18 @@ html,body{
 .haul-stat-label{font-family:var(--mono);font-size:9px;color:var(--text-muted);}
 .haul-stat-val{font-family:var(--mono);font-size:13px;color:var(--amber);}
 
+/* Advanced filters disclosure — same pattern as the haul calc but styled
+   in the muted palette so it reads as secondary tuning, not a primary
+   control. Defaults closed; user opens only when they want to tweak. */
+.adv-row{background:var(--surface2);border:1px solid var(--border);border-radius:3px;padding:6px 12px;margin-bottom:0.75rem;}
+.adv-header{display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none;margin-bottom:0;}
+.adv-header.open{margin-bottom:8px;}
+.adv-label{font-family:var(--mono);font-size:10px;color:var(--text-muted);letter-spacing:0.08em;white-space:nowrap;text-transform:uppercase;}
+.adv-label .adv-hint{color:var(--text-dim);margin-left:6px;text-transform:none;letter-spacing:0.04em;font-size:9px;}
+.adv-toggle{font-size:9px;color:var(--text-muted);opacity:0.6;transition:transform 0.2s;display:inline-block;}
+.adv-toggle.open{transform:rotate(90deg);}
+.adv-grid{display:grid;grid-template-columns:repeat(3,minmax(140px,1fr));gap:10px;align-items:end;}
+
 .hub-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px;}
 .hub-label{font-family:var(--mono);font-size:9px;color:var(--text-muted);letter-spacing:0.08em;text-transform:uppercase;margin-right:2px;}
 .hub-check{display:flex;align-items:center;gap:4px;cursor:pointer;font-family:var(--mono);font-size:10px;color:var(--text);
@@ -550,7 +562,7 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
 
 /* STATION TRADING */
 .st-controls{background:var(--surface);border:1px solid var(--border);border-radius:3px;padding:1rem 1.25rem;margin-bottom:1rem;}
-.st-ctrl-grid{display:grid;grid-template-columns:repeat(7,minmax(110px,160px)) auto;gap:8px;align-items:end;margin-bottom:1rem;}
+.st-ctrl-grid{display:grid;grid-template-columns:repeat(5,minmax(110px,160px)) auto;gap:8px;align-items:end;margin-bottom:0.75rem;}
 /* Station Trading scan button wrapper — fixed width matching Hub Trading,
    centered inside its "auto" grid cell (which is allowed to grow by the
    minmax ceilings on the left). */
@@ -642,43 +654,12 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
           <b>Raw ESI:</b> Full bulk market dump — slowest, most precise. Every order at every hub.
         </div>
       </div>
-      <div class="ctrl-grid" style="grid-template-columns:repeat(11,minmax(0,1fr)) auto;">
+      <div class="ctrl-grid" style="grid-template-columns:repeat(6,minmax(0,1fr)) auto;">
         <div class="ctrl"><div class="ctrl-label">Min Margin %</div><input type="number" id="minMargin" value="5" min="0" max="100" step="0.5" /></div>
         <div class="ctrl"><div class="ctrl-label">Tax % (broker+tx)</div><input type="number" id="taxRate" value="3.6" min="0" max="15" step="0.1" /></div>
         <div class="ctrl"><div class="ctrl-label">Min Daily Vol</div><input type="number" id="minVol" value="10" min="0" /></div>
         <div class="ctrl"><div class="ctrl-label">Min Profit ISK</div><div class="money-input"><span class="money-prefix">ISK</span><input type="text" id="minProfit" value="10,000" inputmode="numeric" oninput="formatMoneyInput(this)" onfocus="this.select()" /></div></div>
         <div class="ctrl"><div class="ctrl-label">Cargo (m³)</div><input type="number" id="cargoM3" value="10000" min="1" step="500" onchange="recalcHaul()" /></div>
-        <div class="ctrl"><div class="ctrl-label">Throttle floor</div>
-          <select id="throttleFloor"><option value="20">20 — Aggressive</option><option value="40" selected>40 — Normal</option><option value="60">60 — Conservative</option></select>
-        </div>
-        <div class="ctrl"><div class="ctrl-label">Min Sell Orders</div>
-          <select id="minSellOrders">
-            <option value="1">1 — Any</option>
-            <option value="3" selected>3 — Default</option>
-            <option value="5">5 — Active</option>
-            <option value="10">10 — Liquid</option>
-          </select>
-        </div>
-        <div class="ctrl"><div class="ctrl-label">Max Price ×Avg</div>
-          <select id="maxPriceMult">
-            <option value="0">Off</option>
-            <option value="2">2× avg</option>
-            <option value="3" selected>3× avg</option>
-            <option value="5">5× avg</option>
-            <option value="10">10× avg</option>
-          </select>
-        </div>
-        <div class="ctrl"><div class="ctrl-label" title="Drops items with zero real market activity — saves time on history fetches">Exclude Dormant</div>
-          <select id="dormantFilter">
-            <option value="off">Off — keep all</option>
-            <option value="30d" selected>Zero 30d vol</option>
-            <option value="7d">Zero 7d vol</option>
-            <option value="1d">Zero 1d vol</option>
-          </select>
-        </div>
-        <div class="ctrl"><div class="ctrl-label">Sort By</div>
-          <select id="sortBy"><option value="margin">Margin %</option><option value="profit">Profit/Unit</option><option value="tripProfit">Trip Profit</option><option value="sellVolume">Sell Volume</option><option value="sellAvg">Sell Avg</option><option value="score">Score</option></select>
-        </div>
         <div class="ctrl"><div class="ctrl-label">Vol Window</div>
           <div class="vol-toggle" role="group">
             <button class="vol-btn" data-vol-window="1" onclick="setVolWindow(1)">1d</button>
@@ -689,6 +670,40 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
         <div style="display:flex;flex-direction:column;gap:5px;">
           <button class="btn-scan" id="scanBtn" onclick="toggleScan()">▶ SCAN ALL</button>
           <button class="btn-stop" id="stopBtn" onclick="stopScan()" style="display:none">■ STOP</button>
+        </div>
+      </div>
+
+      <!-- Advanced filters — collapsed by default. Power-user tuning knobs
+           that most people never need to touch. Sensible defaults apply
+           automatically. Dormant filter is hardwired to "zero 7d volume". -->
+      <div class="adv-row" style="margin-top:10px;">
+        <div class="adv-header" id="advHeader" onclick="toggleAdvFilters()">
+          <span class="adv-toggle" id="advToggle">▶</span>
+          <div class="adv-label">ADVANCED FILTERS <span class="adv-hint">— min sell orders · outlier filter · throttle</span></div>
+        </div>
+        <div id="advBody" style="display:none">
+          <div class="adv-grid">
+            <div class="ctrl"><div class="ctrl-label">Min Sell Orders</div>
+              <select id="minSellOrders">
+                <option value="1">1 — Any</option>
+                <option value="3" selected>3 — Default</option>
+                <option value="5">5 — Active</option>
+                <option value="10">10 — Liquid</option>
+              </select>
+            </div>
+            <div class="ctrl"><div class="ctrl-label">Max Price ×Avg</div>
+              <select id="maxPriceMult">
+                <option value="0">Off</option>
+                <option value="2">2× avg</option>
+                <option value="3" selected>3× avg</option>
+                <option value="5">5× avg</option>
+                <option value="10">10× avg</option>
+              </select>
+            </div>
+            <div class="ctrl"><div class="ctrl-label">Throttle floor</div>
+              <select id="throttleFloor"><option value="20">20 — Aggressive</option><option value="40" selected>40 — Normal</option><option value="60">60 — Conservative</option></select>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -833,21 +848,6 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
         <div class="ctrl"><div class="ctrl-label">Tax % (broker+tx)</div><input type="number" id="st-taxRate" value="3.6" min="0" max="15" step="0.1" /></div>
         <div class="ctrl"><div class="ctrl-label">Min Daily Vol</div><input type="number" id="st-minVol" value="5" min="0" /></div>
         <div class="ctrl"><div class="ctrl-label">Min Profit ISK</div><div class="money-input"><span class="money-prefix">ISK</span><input type="text" id="st-minProfit" value="10,000" inputmode="numeric" oninput="formatMoneyInput(this)" onfocus="this.select()" /></div></div>
-        <div class="ctrl"><div class="ctrl-label">Min Buy Orders</div>
-          <select id="st-minBuyOrders">
-            <option value="1" selected>≥ 1 — Any</option>
-            <option value="3">≥ 3</option>
-            <option value="5">≥ 5</option>
-          </select>
-        </div>
-        <div class="ctrl"><div class="ctrl-label" title="Drops items with zero real market activity — saves time on history fetches">Exclude Dormant</div>
-          <select id="st-dormantFilter">
-            <option value="off">Off — keep all</option>
-            <option value="30d" selected>Zero 30d vol</option>
-            <option value="7d">Zero 7d vol</option>
-            <option value="1d">Zero 1d vol</option>
-          </select>
-        </div>
         <div class="ctrl"><div class="ctrl-label">Vol Window</div>
           <div class="vol-toggle" role="group">
             <button class="vol-btn" data-st-vol-window="1" onclick="stSetVolWindow(1)">1d</button>
@@ -858,6 +858,26 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
         <div class="st-scan-wrap">
           <button class="btn-scan" id="stScanBtn" onclick="toggleStationScan()">▶ SCAN</button>
           <button class="btn-stop" id="stStopBtn" onclick="stopStationScan()" style="display:none">■ STOP</button>
+        </div>
+      </div>
+
+      <!-- Advanced filters — station trading. Only one knob currently
+           (Min Buy Orders). Dormant filter hardwired to "zero 7d volume". -->
+      <div class="adv-row" style="margin-top:10px;">
+        <div class="adv-header" id="stAdvHeader" onclick="stToggleAdvFilters()">
+          <span class="adv-toggle" id="stAdvToggle">▶</span>
+          <div class="adv-label">ADVANCED FILTERS <span class="adv-hint">— min buy orders threshold</span></div>
+        </div>
+        <div id="stAdvBody" style="display:none">
+          <div class="adv-grid">
+            <div class="ctrl"><div class="ctrl-label">Min Buy Orders</div>
+              <select id="st-minBuyOrders">
+                <option value="1" selected>≥ 1 — Any</option>
+                <option value="3">≥ 3</option>
+                <option value="5">≥ 5</option>
+              </select>
+            </div>
+          </div>
         </div>
       </div>
       <div class="st-hub-row">
@@ -2534,6 +2554,30 @@ function toggleHaulCalc() {
   header.classList.toggle('open', !isOpen);
 }
 
+// Advanced Filters disclosure — Hub Trading. Hides power-user tuning knobs
+// (Min Sell Orders, Max Price ×Avg, Throttle Floor) by default so the primary
+// filter row stays focused on the 6 controls users actually adjust.
+function toggleAdvFilters() {
+  const body   = document.getElementById('advBody');
+  const toggle = document.getElementById('advToggle');
+  const header = document.getElementById('advHeader');
+  const isOpen = toggle.classList.contains('open');
+  body.style.display = isOpen ? 'none' : '';
+  toggle.classList.toggle('open', !isOpen);
+  header.classList.toggle('open', !isOpen);
+}
+
+// Advanced Filters disclosure — Station Trading. Hides Min Buy Orders.
+function stToggleAdvFilters() {
+  const body   = document.getElementById('stAdvBody');
+  const toggle = document.getElementById('stAdvToggle');
+  const header = document.getElementById('stAdvHeader');
+  const isOpen = toggle.classList.contains('open');
+  body.style.display = isOpen ? 'none' : '';
+  toggle.classList.toggle('open', !isOpen);
+  header.classList.toggle('open', !isOpen);
+}
+
 function showTab(name, btn) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
@@ -2707,7 +2751,10 @@ async function startScan() {
   const cargo       = parseFloat(document.getElementById('cargoM3').value) || 10000;
   const minSellOrds = parseInt(document.getElementById('minSellOrders').value) || 1;
   const maxPriceMult = parseFloat(document.getElementById('maxPriceMult').value) || 0;
-  const dormantFilter = document.getElementById('dormantFilter').value || 'off';
+  // Dormant filter is now hardwired to "zero 7d volume" — the dropdown
+  // was removed from the UI as part of the streamlined filter row. Users
+  // who want stricter filtering just raise Min Daily Vol instead.
+  const dormantFilter = '7d';
 
   // ── STEP 1: Fetch ALL orders for each region in bulk — ALL HUBS IN PARALLEL ──
   log(`BULK FETCHING ALL REGION ORDERS (${dataSource.toUpperCase()} mode)...`);
@@ -3441,7 +3488,8 @@ async function startStationScan() {
   const minVol      = parseInt(document.getElementById('st-minVol').value)||0;
   const minProfit   = parseMoneyInput('st-minProfit');
   const minBuyOrds  = parseInt(document.getElementById('st-minBuyOrders').value)||1;
-  const stDormantFilter = document.getElementById('st-dormantFilter').value || 'off';
+  // Dormant filter hardwired to "zero 7d volume" — see Hub Trading note.
+  const stDormantFilter = '7d';
 
   stScanActive = true; stStopFlag = false; stResults = []; stScanAllResults = [];
   // Clear any stale per-hub progress from a previous scan (in either tab)
