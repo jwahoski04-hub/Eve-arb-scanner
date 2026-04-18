@@ -601,6 +601,116 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
 .footer{margin-top:1rem;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;
   border-top:1px solid var(--border);padding-top:10px;}
 .footer-text{font-family:var(--mono);font-size:10px;color:var(--text-dim);}
+
+/* ── HELP BUTTON + MODAL ─────────────────────────────────────────── */
+/* Help button sits alongside CLEAR CACHE / EXPORT CSV in the header's
+   bottom row. Sized to match .btn-sm height so the row aligns cleanly,
+   but keeps the amber accent to stay visually distinct as the entry
+   point to the help overlay. The glyph + "HELP" word pair make the
+   affordance unambiguous (an isolated ? is easy to miss on a dense UI). */
+.help-btn{
+  display:inline-flex;align-items:center;gap:5px;
+  height:28px;padding:3px 10px;border-radius:2px;
+  background:transparent;border:1px solid var(--amber);
+  color:var(--amber);font-family:var(--mono);font-size:10px;font-weight:600;
+  letter-spacing:0.08em;text-transform:uppercase;
+  cursor:pointer;user-select:none;transition:all 0.15s;
+}
+.help-btn .help-btn-glyph{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:14px;height:14px;border-radius:50%;
+  border:1px solid var(--amber);font-size:11px;line-height:1;
+  font-weight:700;letter-spacing:0;
+}
+.help-btn:hover{
+  background:var(--amber-dim);
+  box-shadow:0 0 14px rgba(255,166,43,0.25);
+}
+
+/* Backdrop — dims the page, blurs what's behind */
+.help-overlay{
+  display:none;position:fixed;inset:0;z-index:1000;
+  background:rgba(0,0,0,0.82);backdrop-filter:blur(3px);
+  align-items:flex-start;justify-content:center;
+  overflow-y:auto;padding:2rem 1rem;
+}
+.help-overlay.open{display:flex;}
+
+/* The modal body itself */
+.help-modal{
+  background:var(--bg-1);border:1px solid var(--amber);border-radius:4px;
+  max-width:900px;width:100%;
+  padding:1.5rem 1.75rem;
+  box-shadow:0 0 0 3px rgba(255,166,43,0.08), 0 20px 60px rgba(0,0,0,0.6);
+  position:relative;
+}
+.help-modal-close{
+  position:absolute;top:12px;right:12px;width:28px;height:28px;
+  background:transparent;border:1px solid var(--border-ds);border-radius:50%;
+  color:var(--text-muted);font-family:var(--mono);font-size:14px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;transition:all 0.15s;
+}
+.help-modal-close:hover{color:var(--red);border-color:var(--red);}
+
+.help-title{
+  font-family:var(--mono);font-size:16px;color:var(--amber);
+  letter-spacing:0.1em;text-transform:uppercase;margin-bottom:4px;
+}
+.help-subtitle{
+  font-family:var(--font-sans);font-size:12px;color:var(--text-2);margin-bottom:1.25rem;
+}
+
+/* Inner tabbed navigation so the overlay doesn't become a giant scroll */
+.help-tabs{
+  display:flex;gap:2px;border-bottom:1px solid var(--border-ds);margin-bottom:1rem;
+  flex-wrap:wrap;
+}
+.help-tab{
+  font-family:var(--mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;
+  padding:7px 14px;cursor:pointer;color:var(--text-muted);
+  border:none;background:transparent;border-bottom:2px solid transparent;
+  margin-bottom:-1px;transition:color 0.15s, border-color 0.15s;
+}
+.help-tab:hover{color:var(--text);}
+.help-tab.active{color:var(--amber);border-bottom-color:var(--amber);}
+
+.help-section{display:none;}
+.help-section.active{display:block;}
+
+/* Typographic styling inside sections */
+.help-modal h3{
+  font-family:var(--mono);font-size:11px;color:var(--cyan);
+  letter-spacing:0.08em;text-transform:uppercase;margin:1rem 0 0.4rem;
+}
+.help-modal h3:first-child{margin-top:0;}
+.help-modal p{
+  font-family:var(--font-sans);font-size:13px;color:var(--text-1);
+  line-height:1.55;margin-bottom:0.6rem;
+}
+.help-modal ul{
+  font-family:var(--font-sans);font-size:13px;color:var(--text-1);
+  line-height:1.55;padding-left:1.25rem;margin-bottom:0.6rem;
+}
+.help-modal li{margin-bottom:0.25rem;}
+.help-modal code,.help-modal .hk{
+  font-family:var(--mono);font-size:11px;color:var(--amber);
+  background:rgba(255,166,43,0.1);padding:1px 5px;border-radius:2px;
+  border:1px solid rgba(255,166,43,0.25);
+}
+.help-modal .hilite{color:var(--cyan);font-weight:500;}
+.help-modal .warn{color:var(--red);}
+.help-modal .ok{color:var(--green);}
+.help-modal .amber{color:var(--amber);}
+
+/* Little mode-pill element so the explainer can reference RAW / TOP / FUZZ visually */
+.help-mode-pill{
+  display:inline-block;font-family:var(--mono);font-size:10px;padding:1px 6px;
+  border-radius:2px;letter-spacing:0.04em;font-weight:600;
+  border:1px solid;margin:0 2px;
+}
+.help-mode-pill.raw{border-color:var(--cyan);color:var(--cyan);background:var(--cyan-dim);}
+.help-mode-pill.top{border-color:var(--amber);color:var(--amber);background:var(--amber-dim);}
+.help-mode-pill.fuzz{border-color:var(--purple);color:var(--purple);background:var(--purple-dim);}
 </style>
 </head>
 <body>
@@ -615,6 +725,7 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
     <div class="header-row-bottom">
       <button class="btn-sm" onclick="clearCache()">CLEAR CACHE</button>
       <button class="btn-sm" onclick="exportCSV()">EXPORT CSV</button>
+      <button class="help-btn" onclick="openHelp()" title="How to use this tool (Esc to close)" aria-label="Open help"><span class="help-btn-glyph">?</span>HELP</button>
     </div>
   </div>
 
@@ -1015,6 +1126,167 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
   <div class="footer">
     <div class="footer-text">EVE ARBITRAGE SCANNER · HUB TRADING · STATION TRADING · NPC STATIONS ONLY · DATA: EVE ESI PUBLIC API</div>
     <div class="footer-text" id="lastScan">LAST SCAN: —</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       HELP OVERLAY
+       Hidden by default. Opens via the ? button in the header. Content
+       is organized into 4 tabs so it doesn't overwhelm — Quickstart
+       covers 80% of what most users need; the deeper tabs go into
+       details per tab/feature.
+       ═══════════════════════════════════════════════════════════════ -->
+  <div class="help-overlay" id="helpOverlay" onclick="if(event.target===this)closeHelp()" role="dialog" aria-labelledby="helpTitle" aria-modal="true">
+    <div class="help-modal">
+      <button class="help-modal-close" onclick="closeHelp()" title="Close (Esc)" aria-label="Close help">✕</button>
+      <div class="help-title" id="helpTitle">⬡ How to use the Arbitrage Scanner</div>
+      <div class="help-subtitle">Find profitable trades by comparing prices across EVE Online's five major NPC hubs.</div>
+
+      <div class="help-tabs" role="tablist">
+        <button class="help-tab active" data-help-tab="quickstart" onclick="selectHelpTab('quickstart')">Quickstart</button>
+        <button class="help-tab" data-help-tab="hub"        onclick="selectHelpTab('hub')">Hub Trading</button>
+        <button class="help-tab" data-help-tab="station"    onclick="selectHelpTab('station')">Station Trading</button>
+        <button class="help-tab" data-help-tab="watchlist"  onclick="selectHelpTab('watchlist')">Watchlist &amp; Tips</button>
+      </div>
+
+      <!-- ─── Quickstart tab ──────────────────────────────────────── -->
+      <div class="help-section active" id="help-section-quickstart">
+        <h3>What this tool does</h3>
+        <p>The Arbitrage Scanner finds profitable trades between EVE Online's five major NPC trade hubs — <span class="hilite">Jita</span>, <span class="hilite">Amarr</span>, <span class="hilite">Dodixie</span>, <span class="hilite">Hek</span>, and <span class="hilite">Rens</span>. Two modes, each for a different trading strategy:</p>
+        <ul>
+          <li><span class="amber">Hub Trading</span> — buy low at one hub, haul to another, list higher. Logistics arbitrage.</li>
+          <li><span class="amber">Station Trading</span> — buy with a bid order at a single station, sell to the best ask later. Patient arbitrage with zero travel.</li>
+        </ul>
+
+        <h3>Fastest way to get started</h3>
+        <p>You're already on the Hub Trading tab. Try this:</p>
+        <ul>
+          <li>Pick a data source from the three buttons: <span class="help-mode-pill raw">RAW ESI</span> <span class="help-mode-pill top">TOP 2000</span> <span class="help-mode-pill fuzz">FUZZWORK</span> — start with <b>FUZZWORK</b> for broad discovery.</li>
+          <li>Leave the filters at defaults: 5% Min Margin, 10 Min Daily Vol, 10,000 Min Profit ISK, 10,000 m³ Cargo.</li>
+          <li>Click <span class="hk">▶ SCAN ALL</span>. First scan is 3-10 minutes; later scans are much faster thanks to caching.</li>
+          <li>When it's done, the results table is sorted by Margin %. Click any column header to re-sort.</li>
+          <li>Click any row to expand it with detailed price breakdown and trip-profit math.</li>
+          <li>Click <span class="hk">☆</span> on rows you want to track over time — they'll appear in the Watchlist tab.</li>
+        </ul>
+
+        <h3>Three data sources — which to pick?</h3>
+        <ul>
+          <li><span class="help-mode-pill raw">RAW ESI</span> — Full market dump, most precise. Slowest on first run (5-15 min cold), fast on re-scans. Use when you need the absolute freshest prices.</li>
+          <li><span class="help-mode-pill top">TOP 2000</span> — Scans only ~320 popular items plus anything "learned" from past Raw scans. Medium speed, station-precise. Good for quick re-checks.</li>
+          <li><span class="help-mode-pill fuzz">FUZZWORK</span> — Scans the full universe (~15-20k items) via a third-party aggregator. Fastest for broad discovery. Data up to ~30 min stale. For Station Trading, results are ESI-verified to eliminate citadel mirages.</li>
+        </ul>
+
+        <h3>When in doubt</h3>
+        <p><b>Use Fuzzwork for discovery, Raw ESI before executing a big trade.</b> Fuzzwork casts the widest net but has ~30 min lag; Raw ESI is live. If a Fuzzwork result looks promising, run Raw ESI with a narrow filter to verify the specific item before committing real ISK.</p>
+      </div>
+
+      <!-- ─── Hub Trading tab ─────────────────────────────────────── -->
+      <div class="help-section" id="help-section-hub">
+        <h3>What Hub Trading finds</h3>
+        <p>Items being sold cheaper at one hub than another. You buy from the cheap hub's sell order, haul it to the expensive hub, and list it just under the local market. Profit minus sales tax minus your time/risk.</p>
+
+        <h3>Understanding the columns</h3>
+        <ul>
+          <li><b>Route</b> — Origin hub → Destination hub. You buy at origin, sell at destination.</li>
+          <li><b>Sell Price</b> — lowest ask at origin (what you pay per unit).</li>
+          <li><b>Dest Price</b> — lowest ask at destination (what you'll undercut).</li>
+          <li><b>Sell Volume</b> — total units currently for sale at origin. Cap your purchase here.</li>
+          <li><b>Sell Days</b> — days of supply at origin's current daily rate. Lower = faster market.</li>
+          <li><b>Daily Avg</b> — average daily traded volume. The time window (1d/7d/30d) is set by <span class="hk">Vol Window</span>.</li>
+          <li><b>Margin %</b> — net profit ÷ buy price, after sales tax.</li>
+          <li><b>Profit/Unit</b> — ISK profit per single item, after tax.</li>
+          <li><b>Trip Profit</b> — profit if you fill your cargo with this item. Scales with <span class="hk">Cargo m³</span> setting.</li>
+          <li><b>Score</b> — combines volume + margin. High scores = fast AND profitable.</li>
+          <li><b>Velocity</b> — how fast supply turns over. <span class="ok">Green</span> = demand outpaces supply.</li>
+        </ul>
+
+        <h3>Filter by route</h3>
+        <p>Below the results table there's a <b>FILTER BY ROUTE</b> grid. Click to open it. Uncheck any hub-to-hub route to hide those opportunities from the table. Useful for focusing on routes you actually fly (e.g., just Jita ↔ Amarr).</p>
+
+        <h3>Haul Calculator</h3>
+        <p>Above the hub selector, click <b>⬡ HAUL CALCULATOR</b> to see the best trip for your cargo size. It auto-updates when you change the <span class="hk">Cargo m³</span> field.</p>
+
+        <h3>Category filter</h3>
+        <p>Buttons below the hubs filter by item category (Modules, Ships, Drones, etc.). <span class="amber">Left-click</span> to include; in <b>ALL</b> mode, <span class="warn">right-click</span> to exclude a category. Useful when you want "everything except Apparel and SKINs."</p>
+
+        <h3>Advanced Filters</h3>
+        <p>Click to expand. Three seldom-needed settings:</p>
+        <ul>
+          <li><b>Min Sell Orders</b> — require at least N competing sellers at the destination. Default 3 filters out thin markets.</li>
+          <li><b>Max Price × Avg</b> — drops items whose current price is more than N× the recent average. Protects against manipulated-price traps.</li>
+          <li><b>Throttle Floor</b> — how aggressively we push ESI. Default is fine; only change if you see persistent rate-limit errors.</li>
+        </ul>
+      </div>
+
+      <!-- ─── Station Trading tab ─────────────────────────────────── -->
+      <div class="help-section" id="help-section-station">
+        <h3>What Station Trading finds</h3>
+        <p>Items at a single station where someone's highest buy order is meaningfully below someone's lowest sell order. You profit from the <b>spread</b> without moving anything. Two distinct types:</p>
+        <ul>
+          <li><b>Normal spread</b> — Place a buy order at <span class="hilite">Buy Order At</span> + 0.01 ISK (to outbid). Wait for a seller to fill it. Then list your own sell order at <span class="hilite">Sell Order At</span> − 0.01 ISK (to undercut). Profit after tax.</li>
+          <li><b>Crossed market</b> (marked with ⚡ gold) — someone's BID is already ≥ someone else's ASK. You can flip instantly: buy from the ask, sell to the bid, no waiting. Rare but lucrative.</li>
+        </ul>
+
+        <h3>Pick your station</h3>
+        <p>Unlike Hub Trading, Station Trading watches ONE station at a time. Choose Jita, Amarr, Dodixie, Hek, or Rens via the radio buttons. Jita has the most volume and thinnest spreads; smaller hubs have wider spreads but lower throughput.</p>
+
+        <h3>Understanding the columns</h3>
+        <ul>
+          <li><b>Buy Order At</b> — highest active buy order price. You'd outbid this by 0.01 ISK.</li>
+          <li><b>Sell Order At</b> — lowest active sell order price. You'd undercut this by 0.01 ISK.</li>
+          <li><b>ROI %</b> — return on investment after sales tax.</li>
+          <li><b>Sell Volume</b> / <b>Buy Volume</b> — total units currently for sale / being bid on. Both matter for throughput.</li>
+          <li><b>Sell Orders</b> / <b>Buy Orders</b> — number of competing traders on each side. More competitors = more undercutting pressure.</li>
+          <li><b>Score</b> and <b>Velocity</b> — same as Hub Trading.</li>
+        </ul>
+
+        <h3>Crossed markets (⚡)</h3>
+        <p>When you see the gold ⚡ glyph next to an item name, that means the spread is already closed — someone is willing to pay more than another seller is asking. Hover over the ⚡ to see how many units you can flip instantly. These are genuine free-money opportunities (limited by ESI cache lag; they disappear fast).</p>
+
+        <h3>Fuzzwork verification note</h3>
+        <p>When using <span class="help-mode-pill fuzz">FUZZWORK</span> for Station Trading, the tool does an extra verification pass after the initial scan. Fuzzwork's "per-station" filter isn't perfectly strict — it can include prices from nearby citadels that you can't actually trade against from the NPC station. The verification pass re-checks every candidate against live ESI data at the exact station and drops the mirages. This adds ~3-6 minutes but ensures every result is actionable.</p>
+      </div>
+
+      <!-- ─── Watchlist tab ───────────────────────────────────────── -->
+      <div class="help-section" id="help-section-watchlist">
+        <h3>Watchlist basics</h3>
+        <p>Click <span class="hk">☆</span> on any row in Hub Trading or Station Trading to add it to your Watchlist. The star turns into <span class="amber">★</span> to confirm. Click again to remove.</p>
+        <p>The Watchlist is <b>shared between tabs</b> — a starred hub-route and a starred station item both live in the same list, but they're marked with <span style="color:var(--cyan)">HUB</span> or <span style="color:var(--purple)">STATION</span> badges so you can tell them apart.</p>
+
+        <h3>Refresh watched items</h3>
+        <p>Switch to the Watchlist tab and click <span class="hk">▶ REFRESH DATA</span>. Each item is re-fetched using its original data source (the mode you were in when you starred it). After the refresh, arrows appear next to values that changed:</p>
+        <ul>
+          <li><span class="ok">↑ green</span> — value moved in your favor (e.g., sell price went up)</li>
+          <li><span class="warn">↓ red</span> — value moved against you (e.g., buy price went up)</li>
+          <li><span style="color:var(--text-dim)">=</span> — no change</li>
+        </ul>
+        <p>Each item also shows "Last refresh: X ago" so you know how stale the data is.</p>
+
+        <h3>Copy item names</h3>
+        <p>Hover an item name in any table. The text turns <span class="amber">amber</span> to indicate it's clickable. Click to copy the exact item name to your clipboard — useful for pasting into EVE Online's market search.</p>
+
+        <h3>Export to CSV</h3>
+        <p>Every tab has an <span class="hk">EXPORT CSV</span> button that dumps the current results for use in Excel, Google Sheets, etc. Watchlist CSV includes both current AND previous snapshot values, so you can see raw deltas.</p>
+
+        <h3>Performance tips</h3>
+        <ul>
+          <li><b>Keep the tab open between scans.</b> In-memory caches (for names, volumes, categories) only persist while the page is loaded.</li>
+          <li><b>First scan warms everything; later scans are 3-5× faster.</b> A fresh browser session re-starts cold.</li>
+          <li><b>If a scan feels stuck</b>, check the log bar at the bottom. Messages like <span class="warn">⚠ PAGE 1 FAILED</span> or <span class="warn">RATE LIMITED</span> mean ESI is having a moment — wait 30-60 seconds and try again.</li>
+          <li><b>Skip Hek and Rens</b> for routine Hub Trading scans. Jita ↔ Amarr and Jita ↔ Dodixie are the two biggest routes anyway, and dropping two hubs cuts scan time by ~25%.</li>
+        </ul>
+
+        <h3>Troubleshooting</h3>
+        <ul>
+          <li><b>0 opportunities returned</b> — ESI may have been slow or rate-limited during the scan. Wait a minute and try again.</li>
+          <li><b>"Suspiciously low order count"</b> warning in the log — the bulk fetch partially failed. Re-run the scan in 30 seconds.</li>
+          <li><b>Scan takes forever</b> — ESI's backend might be under load. Try FUZZWORK mode, which uses a different server.</li>
+          <li><b>"IDB open failed"</b> — your browser has caching disabled (common in private/incognito mode). Scans still work but won't benefit from response caching between runs.</li>
+        </ul>
+
+        <h3>Disclaimer</h3>
+        <p style="color:var(--text-2);font-size:11px;">This tool is not affiliated with or endorsed by CCP Games. EVE Online and all related trademarks are the property of CCP hf. Market data may be delayed or incomplete. Only NPC station orders are visible via the public ESI API. Use at your own risk.</p>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -1504,6 +1776,25 @@ let bytesSaved = 0;
 const historyRequestTimes = [];
 const HISTORY_MAX_PER_MIN = 240;
 
+// Gap-fill is the phase that fetches per-typeId orders for items the bulk
+// /markets/{region}/orders endpoint missed due to its 5-min cache lag.
+// Without a cap, gap-fill can fire 2,500+ requests per hub, which burns
+// through ESI's per-route rate-limit bucket (the market-order group has
+// a tight cap under the new 2026 rate-limit system) and throws the scan
+// into a 30-second-sleep loop that takes 15+ minutes to clear.
+//
+// Cap of 500 per hub was chosen because:
+//   - Covers the typical number of genuinely-low-volume items ESI's bulk
+//     dump misses (skills, implants, rare modules, BPCs)
+//   - Stays well under the market-order bucket's apparent ~150/15min cap
+//     when combined with bulk fetch and history requests
+//   - Gap-fill completes in ~60-90 seconds per hub instead of 15+ minutes
+//
+// If gap-fill finds more missing items than this, we prioritize by typeId
+// (stable order) and log the truncation so users know they may be missing
+// some long-tail items.
+const GAP_FILL_MAX_PER_HUB = 500;
+
 function updateRateUI() {
   const rf = document.getElementById('rateFill');
   const ev = document.getElementById('rateVal');
@@ -1585,8 +1876,13 @@ async function checkThrottle() {
       const wait = Math.min((state.reset || 60) * 1000, 30000);
       log(`RATE LIMIT GROUP "${group}" near empty (${state.remaining} left) — sleeping ${Math.round(wait/1000)}s`);
       await sleep(wait);
-      // Assume bucket has refilled after reset
-      state.remaining = state.limit ? 1000 : 500;
+      // After the sleep, assume the bucket refilled to a *modest* value.
+      // We used to guess 500-1000 here which caused a nasty loop: sleep →
+      // fire 6 concurrent requests → bucket immediately empty → sleep →
+      // repeat. ESI will tell us the true value on the next response's
+      // X-Ratelimit-Remaining header via parseRateHeaders(), so we just
+      // need a cushion high enough to let ONE probe request through.
+      state.remaining = 30;
       isThrottled = false;
       updateRateUI();
     }
@@ -2670,6 +2966,48 @@ function toggleHaulCalc() {
   header.classList.toggle('open', !isOpen);
 }
 
+// ────────────────────────────────────────────────────────────────────
+// HELP MODAL — opened via the ? button in the header. Content is in
+// four tabs (Quickstart, Hub Trading, Station Trading, Watchlist/Tips).
+// Keep the API tiny: open, close, select-tab, and an Escape handler.
+// ────────────────────────────────────────────────────────────────────
+function openHelp() {
+  const overlay = document.getElementById('helpOverlay');
+  if (!overlay) return;
+  overlay.classList.add('open');
+  // Prevent the body from scrolling behind the modal — jarring on mobile
+  document.body.style.overflow = 'hidden';
+  // Always start on the Quickstart tab when opening
+  selectHelpTab('quickstart');
+}
+
+function closeHelp() {
+  const overlay = document.getElementById('helpOverlay');
+  if (!overlay) return;
+  overlay.classList.remove('open');
+  document.body.style.overflow = '';
+}
+
+function selectHelpTab(name) {
+  document.querySelectorAll('.help-tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.helpTab === name);
+  });
+  document.querySelectorAll('.help-section').forEach(s => {
+    s.classList.toggle('active', s.id === `help-section-${name}`);
+  });
+  // Reset scroll to top when switching tabs so long sections start fresh
+  const overlay = document.getElementById('helpOverlay');
+  if (overlay) overlay.scrollTop = 0;
+}
+
+// ESC key closes the modal — standard modal affordance
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    const overlay = document.getElementById('helpOverlay');
+    if (overlay && overlay.classList.contains('open')) closeHelp();
+  }
+});
+
 // Advanced Filters disclosure — Hub Trading. Hides power-user tuning knobs
 // (Min Sell Orders, Max Price ×Avg, Throttle Floor) by default so the primary
 // filter row stays focused on the 6 controls users actually adjust.
@@ -2961,7 +3299,14 @@ async function startScan() {
       if (!tMap.has(tid)) missingHere.push(tid);
     }
     if (!missingHere.length) continue;
-    log(`${hub.name}: bulk missed ${missingHere.length} typeIds — fetching individually...`);
+    // Cap exhaustive gap-fill at GAP_FILL_MAX_PER_HUB to stay within ESI's
+    // per-route rate-limit bucket and prevent the 15+ minute sleep loop.
+    let truncatedInfo = '';
+    if (missingHere.length > GAP_FILL_MAX_PER_HUB) {
+      truncatedInfo = ` (capped from ${missingHere.length.toLocaleString()})`;
+      missingHere.length = GAP_FILL_MAX_PER_HUB;
+    }
+    log(`${hub.name}: fetching ${missingHere.length.toLocaleString()} missing typeIds${truncatedInfo}...`);
 
     // Bounded worker pool — 6 concurrent per hub (not 50). Previous 50-wide
     // batches saturated Firefox's connection pool and caused silent timeouts
@@ -4324,8 +4669,15 @@ async function startStationScan() {
     }
   } catch(e) {}
 
-  const missingIds = allTypeIds.filter(id => !typeMap.has(id));
-  stLog(`Gap-fill: ${allTypeIds.length.toLocaleString()} active types · ${missingIds.length.toLocaleString()} missing from bulk — fetching...`);
+  const allMissingIds = allTypeIds.filter(id => !typeMap.has(id));
+  // Cap exhaustive gap-fill at GAP_FILL_MAX_PER_HUB to stay within ESI's
+  // per-route rate-limit bucket. Without this cap, gap-fill can fire
+  // 2,500+ requests and hit the 30-second-sleep loop.
+  const missingIds = allMissingIds.slice(0, GAP_FILL_MAX_PER_HUB);
+  const capNote = allMissingIds.length > GAP_FILL_MAX_PER_HUB
+    ? ` (capped from ${allMissingIds.length.toLocaleString()})`
+    : '';
+  stLog(`Gap-fill: ${allTypeIds.length.toLocaleString()} active types · ${missingIds.length.toLocaleString()} missing from bulk${capNote} — fetching...`);
 
   // Fetch missing items with a bounded worker pool. Previously ran 50 parallel
   // fetches per batch which exhausted Firefox's connection pool to ESI —
