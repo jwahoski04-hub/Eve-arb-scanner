@@ -1446,28 +1446,41 @@ async function checkThrottle() {
   }
 }
 
-// History endpoint self-throttle. Keeps us well under ESI's 300/min cap
-// on /markets/{region}/history/ by ensuring no more than HISTORY_MAX_PER_MIN
-// requests land inside any rolling 60-second window. Call this BEFORE
-// issuing a history request.
+// History endpoint self-throttle.
+//
+// Originally this capped history requests at 240/min to stay under ESI's
+// documented 300/min ceiling for /markets/{region}/history/. That safety
+// margin turned out to be way too conservative — on cold scans with 3000+
+// typeIds, it was adding 10-15 minutes to the history phase even when ESI
+// itself was perfectly responsive.
+//
+// We now trust ESI's own 429 + Retry-After mechanism. If we push too hard,
+// ESI responds with 429 and our handle429() sleeps exactly as long as
+// ESI says to. That's reactive rather than proactive, but it's also more
+// honest — we no longer add artificial delay that isn't actually needed.
+//
+// The function stays in place (rather than removing all the call sites)
+// so we can re-enable throttling quickly if CCP ever tightens the cap.
+// Uncomment the body below to restore the original behavior.
 async function throttleHistory() {
+  /* Original throttle — kept for reference, currently disabled:
   const now = Date.now();
-  // Drop timestamps older than 60s
   while (historyRequestTimes.length && now - historyRequestTimes[0] > 60000) {
     historyRequestTimes.shift();
   }
   if (historyRequestTimes.length >= HISTORY_MAX_PER_MIN) {
-    // Wait until the oldest timestamp in our window ages out
     const oldest = historyRequestTimes[0];
-    const waitMs = 60000 - (now - oldest) + 50; // +50ms cushion
+    const waitMs = 60000 - (now - oldest) + 50;
     if (waitMs > 0) await sleep(waitMs);
-    // Re-drain and fall through — the request can proceed now
     const now2 = Date.now();
     while (historyRequestTimes.length && now2 - historyRequestTimes[0] > 60000) {
       historyRequestTimes.shift();
     }
   }
   historyRequestTimes.push(Date.now());
+  */
+  // No-op — trust ESI's 429 + Retry-After to signal when we need to slow down
+  return;
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
