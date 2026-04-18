@@ -399,8 +399,26 @@ html,body{
 .progress-timer .timer-label{color:var(--text-dim);}
 .progress-timer .timer-val{color:var(--cyan);font-variant-numeric:tabular-nums;}
 .progress-timer .timer-val.eta{color:var(--amber);}
-.log-bar{font-family:var(--mono);font-size:10px;color:var(--text-muted);border-left:2px solid var(--border-bright);
-  padding-left:8px;margin-bottom:1rem;height:14px;overflow:hidden;}
+/* Log bar — rolling history of the last few diagnostic messages. The old
+   single-line behavior meant critical scan diagnostics (e.g. "Spread scan:
+   N candidates — M failed ROI filter") got overwritten within a frame,
+   making it impossible to tell why a scan returned 9 instead of 900. The
+   expanded 5-line bar keeps recent messages visible until the next scan. */
+.log-bar{
+  font-family:var(--mono);font-size:10px;color:var(--text-muted);
+  border-left:2px solid var(--border-bright);
+  padding:4px 8px;margin-bottom:1rem;
+  max-height:90px;overflow-y:auto;
+  display:flex;flex-direction:column;gap:2px;
+  background:rgba(0,0,0,0.15);
+}
+.log-bar::-webkit-scrollbar{width:6px;}
+.log-bar::-webkit-scrollbar-track{background:transparent;}
+.log-bar::-webkit-scrollbar-thumb{background:var(--border-ds);border-radius:3px;}
+.log-line{line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.log-line.warn{color:var(--amber);}
+.log-line.err{color:var(--red);}
+.log-line.latest{color:var(--text-0);}
 .cursor{animation:blink 0.8s infinite;}
 
 .table-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:8px;}
@@ -887,7 +905,7 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
         <span class="timer-item"><span class="timer-label">ETA</span><span class="timer-val eta" id="etaTime">—</span></span>
       </div>
     </div>
-    <div class="log-bar" id="logBar">&gt; AWAITING SCAN COMMAND<span class="cursor">_</span></div>
+    <div class="log-bar" id="logBar"><div class="log-line latest">&gt; AWAITING SCAN COMMAND<span class="cursor">_</span></div></div>
 
     <div class="table-header">
       <div class="table-title">HUB TRADING OPPORTUNITIES <span style="color:var(--text-dim)" id="resultCount"></span></div>
@@ -2412,8 +2430,17 @@ async function fetchRegionOrders(regionId) {
   // Final progress push for this hub
   reportBulkProgress();
 
+  // Detailed fetch summary — crucial for diagnosing silent failures.
+  // If the scan comes back with "9 opportunities" and you're baffled,
+  // this line tells you whether the problem is upstream (we got only
+  // 200 orders) or downstream (we got 40k but the spread filter is
+  // nuking everything).
+  const pagesAttempted = remainingPages.length + 1; // +1 for page 1
+  const pagesOk = pagesAttempted - failed;
+  log(`${hubName}: fetch complete — ${allOrders.length.toLocaleString()} orders from ${pagesOk}/${pagesAttempted} pages (${failed} failed)`);
+
   if (failed > 0) {
-    log(`${hubName}: ${failed} page(s) failed after retries — continuing with partial data`);
+    log(`⚠ ${hubName}: ${failed} page(s) failed after retries — results may be incomplete`);
   }
 
   return allOrders;
@@ -3070,7 +3097,50 @@ function showTab(name, btn) {
 // ============================================================
 // UI HELPERS
 // ============================================================
-function log(msg) { document.getElementById('logBar').innerHTML = '&gt; ' + msg + '<span class="cursor">_</span>'; }
+// Rolling log history — up to N most recent lines per tab. Each tab has
+// its own history so switching tabs mid-scan doesn't lose context.
+const LOG_MAX_LINES = 5;
+const logHistory = { hub: [], station: [], watchlist: [] };
+
+function renderLogBar(which) {
+  const barId = which === 'station' ? 'stLogBar' : which === 'watchlist' ? 'wlLogBar' : 'logBar';
+  const el = document.getElementById(barId);
+  if (!el) return;
+  const lines = logHistory[which] || [];
+  if (!lines.length) {
+    el.innerHTML = '<div class="log-line">&gt; READY<span class="cursor">_</span></div>';
+    return;
+  }
+  el.innerHTML = lines.map((entry, i) => {
+    const isLatest = i === lines.length - 1;
+    const cls = (entry.level === 'warn' ? ' warn' : entry.level === 'err' ? ' err' : '') +
+                (isLatest ? ' latest' : '');
+    const cursor = isLatest ? '<span class="cursor">_</span>' : '';
+    return `<div class="log-line${cls}">&gt; ${entry.msg}${cursor}</div>`;
+  }).join('');
+  // Auto-scroll to bottom so latest line is always visible
+  el.scrollTop = el.scrollHeight;
+}
+
+function pushLog(which, msg) {
+  const hist = logHistory[which] || (logHistory[which] = []);
+  // Categorize by prefix so warnings/errors get colored
+  let level = '';
+  if (msg.startsWith('⚠'))        level = 'warn';
+  else if (msg.startsWith('ERR')) level = 'err';
+  hist.push({ msg, level });
+  while (hist.length > LOG_MAX_LINES) hist.shift();
+  renderLogBar(which);
+}
+
+function log(msg) {
+  // Route to whichever tab is currently running a scan. Previously this
+  // always wrote to the Hub Trading log bar, which meant diagnostic
+  // messages emitted during Station Trading scans (e.g., from the shared
+  // fetchRegionOrders bulk fetch) were invisible to the user.
+  const which = bulkProgressTab === 'station' ? 'station' : 'hub';
+  pushLog(which, msg);
+}
 function setProgress(pct, text, sub) {
   document.getElementById('progressBar').style.width = Math.min(100, pct) + '%';
   document.getElementById('progressText').textContent = text;
@@ -4549,7 +4619,7 @@ function getStHub() {
   return active ? active.id.replace('st-hub-','') : '10000002';
 }
 
-function stLog(msg) { document.getElementById('stLogBar').innerHTML = '&gt; ' + msg + '<span class="cursor">_</span>'; }
+function stLog(msg) { pushLog('station', msg); }
 function stSetProgress(pct, text, sub) {
   document.getElementById('stProgressBar').style.width = Math.min(100,pct)+'%';
   document.getElementById('stProgressText').textContent = text;
