@@ -1255,7 +1255,15 @@ let db = null;
 
 function openDB() {
   return new Promise((res, rej) => {
-    const req = indexedDB.open(DB_NAME, DB_VER);
+    let req;
+    try {
+      req = indexedDB.open(DB_NAME, DB_VER);
+    } catch (e) {
+      // Some private-browsing configurations throw synchronously here
+      console.warn('IDB not available (sync):', e.name, e.message);
+      res(null);
+      return;
+    }
     req.onupgradeneeded = e => {
       const d = e.target.result;
       if (!d.objectStoreNames.contains(STORE)) {
@@ -1264,7 +1272,21 @@ function openDB() {
       }
     };
     req.onsuccess = e => { db = e.target.result; res(db); };
-    req.onerror   = e => { console.warn('IDB open failed', e); res(null); };
+    req.onerror = e => {
+      // Surface the actual error so we can diagnose. Common causes:
+      // - Private/incognito browsing (Firefox blocks IDB in most configs)
+      // - "Delete cookies and site data when closed" setting enabled
+      // - Storage quota exhausted / disk full
+      const err = e.target?.error;
+      console.warn(
+        'IDB open failed — scans will work but results will not be cached.',
+        err ? `${err.name}: ${err.message}` : e
+      );
+      res(null);
+    };
+    req.onblocked = () => {
+      console.warn('IDB blocked — another tab has an older DB version open.');
+    };
   });
 }
 
@@ -1774,6 +1796,13 @@ let bulkProgressTab = 'hub';
 // max percentage for the fetch stage.
 let bulkProgressMaxPct = 40;
 
+// Diagnostics for bulk fetch — helps us see the actual wall-clock rate
+// vs. what we'd expect from concurrent fetches. If the rate is much
+// lower than expected given the concurrency and per-request times,
+// something is throttling us (browser connection pool, ESI, etc.).
+let bulkFetchStart = 0;
+const bulkFetchSamples = []; // { timestamp, count } — for rolling rate
+
 function reportBulkProgress() {
   const hubs = Object.values(bulkProgress);
   if (!hubs.length) return;
@@ -1781,8 +1810,30 @@ function reportBulkProgress() {
   const totalPages   = hubs.reduce((s, h) => s + (h.total   || 0), 0);
   const pct = totalPages > 0 ? (totalFetched / totalPages) * bulkProgressMaxPct : 0;
   const hubParts = hubs.map(h => `${h.name}: ${h.fetched}/${h.total || '?'}`).join(' · ');
+
+  // Compute current fetch rate (pages per second) over the whole scan.
+  // Also a rolling 10-second rate to see if we're slowing down.
+  const now = Date.now();
+  if (bulkFetchStart === 0) bulkFetchStart = now;
+  const elapsedS = Math.max(1, (now - bulkFetchStart) / 1000);
+  const overallRate = (totalFetched / elapsedS).toFixed(2);
+
+  // Rolling 10s rate — add current sample, drop samples older than 10s
+  bulkFetchSamples.push({ t: now, count: totalFetched });
+  while (bulkFetchSamples.length > 1 && bulkFetchSamples[0].t < now - 10000) {
+    bulkFetchSamples.shift();
+  }
+  let rollingRate = overallRate;
+  if (bulkFetchSamples.length >= 2) {
+    const first = bulkFetchSamples[0];
+    const last  = bulkFetchSamples[bulkFetchSamples.length - 1];
+    const dt = Math.max(1, (last.t - first.t) / 1000);
+    const dc = last.count - first.count;
+    rollingRate = (dc / dt).toFixed(2);
+  }
+
   const text = `Fetching orders — ${hubParts}`;
-  const sub  = `${totalFetched}/${totalPages} pages`;
+  const sub  = `${totalFetched}/${totalPages} pages · ${rollingRate}/s (avg ${overallRate}/s)`;
   if (bulkProgressTab === 'station') stSetProgress(pct, text, sub);
   else                               setProgress(pct, text, sub);
 }
@@ -2547,6 +2598,9 @@ async function startScan() {
   cacheHits = 0; cacheMisses = 0; cache304s = 0; bytesSaved = 0;
   // Clear any stale per-hub progress from a previous scan
   Object.keys(bulkProgress).forEach(k => delete bulkProgress[k]);
+  // Reset diagnostics for the new scan
+  bulkFetchStart = 0;
+  bulkFetchSamples.length = 0;
   // Route bulk fetch progress updates to the Hub Trading progress bar.
   // Fetch stage is the first 40% of this tab's 5-stage pipeline.
   bulkProgressTab    = 'hub';
@@ -3281,6 +3335,9 @@ async function startStationScan() {
   stScanActive = true; stStopFlag = false; stResults = []; stScanAllResults = [];
   // Clear any stale per-hub progress from a previous scan (in either tab)
   Object.keys(bulkProgress).forEach(k => delete bulkProgress[k]);
+  // Reset diagnostics for the new scan
+  bulkFetchStart = 0;
+  bulkFetchSamples.length = 0;
   // Route bulk fetch progress updates to the Station Trading progress bar.
   // Station Trading only fetches one region, so the fetch stage gets the
   // first ~20% of this tab's pipeline (the rest is indexing, gap-fill,
@@ -3665,8 +3722,15 @@ function exportStationCSV() {
 // ============================================================
 // INIT
 // ============================================================
-openDB().then(() => {
-  log('INDEXEDDB CACHE READY · INITIALIZED');
+openDB().then((dbHandle) => {
+  if (dbHandle) {
+    log('INDEXEDDB CACHE READY · INITIALIZED');
+  } else {
+    // Private browsing, strict privacy settings, or storage quota issues
+    // can prevent IDB from opening. Scans still work; they just can't
+    // benefit from cached results or 304 revalidation between runs.
+    log('INITIALIZED · CACHE UNAVAILABLE (check console — may be private mode)');
+  }
   updateRateUI();
   updateWlBadge();
   buildRouteMatrix();
