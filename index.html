@@ -343,10 +343,58 @@ html,body{
 .progress-bar-wrap{height:3px;background:var(--surface2);border-radius:2px;overflow:hidden;margin-bottom:5px;}
 .progress-bar{height:100%;background:linear-gradient(90deg,var(--cyan),var(--green));border-radius:2px;transition:width 0.3s;width:0%;}
 .progress-info{display:flex;justify-content:space-between;}
+
+/* ── Scan details wrapper + post-scan collapsed summary ──────────────
+   While scanning: shows the live progress bar + timer + rolling log bar.
+   When the scan finishes (either success or aborted): collapses those
+   into a single compact summary line with a toggle to re-expand. Users
+   who want to see what happened during the scan can click the summary
+   to get the full view back. Click again to re-collapse. */
+.scan-details-wrap{margin-bottom:1rem;}
+.scan-details-wrap.collapsed .scan-details-live{display:none;}
+.scan-details-wrap:not(.collapsed) .scan-summary{display:none;}
+
+.scan-summary{
+  display:flex;align-items:center;gap:10px;
+  padding:8px 12px;border-radius:3px;cursor:pointer;user-select:none;
+  background:var(--bg-2);border:1px solid var(--border-ds);
+  font-family:var(--font-mono);font-size:11px;color:var(--text-1);
+  transition:border-color 0.15s, background 0.15s;
+}
+.scan-summary:hover{border-color:var(--cyan);background:rgba(74,214,255,0.05);}
+.scan-summary-icon{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:16px;height:16px;border-radius:50%;flex-shrink:0;
+  font-size:11px;font-weight:700;
+}
+.scan-summary-icon.ok   {color:var(--green); border:1px solid var(--green);}
+.scan-summary-icon.warn {color:var(--amber); border:1px solid var(--amber);}
+.scan-summary-icon.err  {color:var(--red);   border:1px solid var(--red);}
+.scan-summary-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.scan-summary-time{color:var(--text-2);font-variant-numeric:tabular-nums;white-space:nowrap;}
+.scan-summary-toggle{
+  color:var(--cyan);font-family:var(--font-sans);font-size:10px;
+  letter-spacing:0.4px;text-transform:uppercase;white-space:nowrap;
+  padding:2px 8px;border:1px solid rgba(74,214,255,0.3);border-radius:2px;
+}
+.scan-summary:hover .scan-summary-toggle{border-color:var(--cyan);background:rgba(74,214,255,0.08);}
+
+/* Small "hide details" link in the live view, lets user manually collapse
+   even if the scan is still running or they've expanded a completed scan. */
+.scan-details-collapse-btn{
+  display:none;  /* Only shown post-scan (when we know we have a summary) */
+  float:right;font-family:var(--font-sans);font-size:10px;letter-spacing:0.4px;
+  color:var(--text-2);cursor:pointer;user-select:none;
+  padding:2px 8px;border:1px solid var(--border-ds);border-radius:2px;
+  background:transparent;margin-left:auto;text-transform:uppercase;
+  transition:all 0.15s;
+}
+.scan-details-collapse-btn:hover{color:var(--cyan);border-color:var(--cyan);background:rgba(74,214,255,0.05);}
+.scan-details-collapse-btn.available{display:inline-block;}
 /* Data source mode selector — prominent row at the top of Hub Trading.
-   Three mutually exclusive modes: RAW ESI (slow, precise), TOP 2000
-   (moderate, precise), FUZZWORK (fastest, region-level). Each gets its
-   own accent color so the active mode is unmistakable at a glance. */
+   Two mutually exclusive modes: RAW ESI (precise, full-station), FUZZWORK
+   (fastest, pre-aggregated). Each gets its own accent color so the active
+   mode is unmistakable at a glance. */
 .data-source-row{
   display:flex;align-items:center;gap:12px;padding:10px 14px;margin-bottom:12px;
   background:linear-gradient(180deg, rgba(74,214,255,0.06), rgba(74,214,255,0.02));
@@ -372,8 +420,6 @@ html,body{
 /* Per-mode active colors */
 .ds-btn.ds-esi.active{background:rgba(74,214,255,0.15);color:var(--cyan);
   box-shadow:inset 0 -2px 0 var(--cyan);}
-.ds-btn.ds-top.active{background:rgba(251,191,36,0.15);color:var(--gold);
-  box-shadow:inset 0 -2px 0 var(--gold);}
 .ds-btn.ds-fuzz.active{background:rgba(167,139,250,0.15);color:var(--purple);
   box-shadow:inset 0 -2px 0 var(--purple);}
 .ds-speed-hint{
@@ -727,7 +773,6 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
   border:1px solid;margin:0 2px;
 }
 .help-mode-pill.raw{border-color:var(--cyan);color:var(--cyan);background:var(--cyan-dim);}
-.help-mode-pill.top{border-color:var(--amber);color:var(--amber);background:var(--amber-dim);}
 .help-mode-pill.fuzz{border-color:var(--purple);color:var(--purple);background:var(--purple-dim);}
 </style>
 </head>
@@ -774,9 +819,6 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
         <div class="data-source-toggle" role="group">
           <button class="ds-btn ds-esi active" data-ds="esi" onclick="setDataSource('esi')" title="Full market dump from CCP's ESI API — all items, station-level precision. Slowest but most complete.">
             RAW ESI <span class="ds-speed-hint slow">SLOW</span>
-          </button>
-          <button class="ds-btn ds-top" data-ds="top" onclick="setDataSource('top')" title="Limits the scan to the top 2,000 most-traded items. Uses ESI per-type queries — faster than full dump, same station-level precision.">
-            TOP 2000 <span class="ds-speed-hint med">MED</span>
           </button>
           <button class="ds-btn ds-fuzz" data-ds="fuzz" onclick="setDataSource('fuzz')" title="Uses Fuzzwork's pre-aggregated market data (updated every 30 min), pinned to each hub station. Fastest mode. Data can be up to ~30 min stale but is station-precise.">
             FUZZWORK <span class="ds-speed-hint fast">FAST</span>
@@ -894,18 +936,31 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
       <span class="working-badge" id="workingBadge">⬡ WORKING</span>
     </div>
-    <div class="progress-area">
-      <div class="progress-bar-wrap"><div class="progress-bar" id="progressBar"></div></div>
-      <div class="progress-info">
-        <div class="progress-text" id="progressText">Select hubs and click SCAN ALL — bulk region fetch active</div>
-        <div class="progress-pct" id="progressPct"></div>
+    <div class="scan-details-wrap" id="hubScanDetails">
+      <!-- Collapsed summary — shown only after a scan finishes -->
+      <div class="scan-summary" id="hubScanSummary" onclick="toggleScanDetails('hub')" title="Click to show scan details">
+        <span class="scan-summary-icon ok" id="hubScanSummaryIcon">✓</span>
+        <span class="scan-summary-text" id="hubScanSummaryText">Scan complete</span>
+        <span class="scan-summary-time" id="hubScanSummaryTime"></span>
+        <span class="scan-summary-toggle">▶ show details</span>
       </div>
-      <div class="progress-timer" id="progressTimer" style="display:none">
-        <span class="timer-item"><span class="timer-label">Elapsed</span><span class="timer-val" id="elapsedTime">0:00</span></span>
-        <span class="timer-item"><span class="timer-label">ETA</span><span class="timer-val eta" id="etaTime">—</span></span>
+      <!-- Live view — shown during scans and when user clicks to expand -->
+      <div class="scan-details-live">
+        <button class="scan-details-collapse-btn" id="hubScanCollapseBtn" onclick="toggleScanDetails('hub')" title="Hide details">▲ hide details</button>
+        <div class="progress-area">
+          <div class="progress-bar-wrap"><div class="progress-bar" id="progressBar"></div></div>
+          <div class="progress-info">
+            <div class="progress-text" id="progressText">Select hubs and click SCAN ALL — bulk region fetch active</div>
+            <div class="progress-pct" id="progressPct"></div>
+          </div>
+          <div class="progress-timer" id="progressTimer" style="display:none">
+            <span class="timer-item"><span class="timer-label">Elapsed</span><span class="timer-val" id="elapsedTime">0:00</span></span>
+            <span class="timer-item"><span class="timer-label">ETA</span><span class="timer-val eta" id="etaTime">—</span></span>
+          </div>
+        </div>
+        <div class="log-bar" id="logBar"><div class="log-line latest">&gt; AWAITING SCAN COMMAND<span class="cursor">_</span></div></div>
       </div>
     </div>
-    <div class="log-bar" id="logBar"><div class="log-line latest">&gt; AWAITING SCAN COMMAND<span class="cursor">_</span></div></div>
 
     <div class="table-header">
       <div class="table-title">HUB TRADING OPPORTUNITIES <span style="color:var(--text-dim)" id="resultCount"></span></div>
@@ -963,9 +1018,6 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
         <div class="data-source-toggle" role="group">
           <button class="ds-btn ds-esi active" data-st-ds="esi" onclick="stSetDataSource('esi')" title="Full market dump from CCP's ESI API — all items at the selected station. Slowest but most complete.">
             RAW ESI <span class="ds-speed-hint slow">SLOW</span>
-          </button>
-          <button class="ds-btn ds-top" data-st-ds="top" onclick="stSetDataSource('top')" title="Limits to top 2,000 items — faster than full dump, same station-level precision.">
-            TOP 2000 <span class="ds-speed-hint med">MED</span>
           </button>
           <button class="ds-btn ds-fuzz" data-st-ds="fuzz" onclick="stSetDataSource('fuzz')" title="Uses Fuzzwork's pre-aggregated data, pinned to this station. Fastest. Data may be up to ~30 min stale but station-precise.">
             FUZZWORK <span class="ds-speed-hint fast">FAST</span>
@@ -1049,18 +1101,31 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
       <span class="working-badge" id="stWorkingBadge">⬡ WORKING</span>
     </div>
-    <div class="progress-area" id="st-progress-area" style="display:none">
-      <div class="progress-bar-wrap"><div class="progress-bar" id="stProgressBar"></div></div>
-      <div class="progress-info">
-        <div class="progress-text" id="stProgressText"></div>
-        <div class="progress-pct" id="stProgressPct"></div>
+    <div class="scan-details-wrap" id="stScanDetails">
+      <!-- Collapsed summary — shown only after a scan finishes -->
+      <div class="scan-summary" id="stScanSummary" onclick="toggleScanDetails('station')" title="Click to show scan details">
+        <span class="scan-summary-icon ok" id="stScanSummaryIcon">✓</span>
+        <span class="scan-summary-text" id="stScanSummaryText">Scan complete</span>
+        <span class="scan-summary-time" id="stScanSummaryTime"></span>
+        <span class="scan-summary-toggle">▶ show details</span>
       </div>
-      <div class="progress-timer" id="stProgressTimer" style="display:none">
-        <span class="timer-item"><span class="timer-label">Elapsed</span><span class="timer-val" id="stElapsedTime">0:00</span></span>
-        <span class="timer-item"><span class="timer-label">ETA</span><span class="timer-val eta" id="stEtaTime">—</span></span>
+      <!-- Live view — shown during scans and when user clicks to expand -->
+      <div class="scan-details-live">
+        <button class="scan-details-collapse-btn" id="stScanCollapseBtn" onclick="toggleScanDetails('station')" title="Hide details">▲ hide details</button>
+        <div class="progress-area" id="st-progress-area" style="display:none">
+          <div class="progress-bar-wrap"><div class="progress-bar" id="stProgressBar"></div></div>
+          <div class="progress-info">
+            <div class="progress-text" id="stProgressText"></div>
+            <div class="progress-pct" id="stProgressPct"></div>
+          </div>
+          <div class="progress-timer" id="stProgressTimer" style="display:none">
+            <span class="timer-item"><span class="timer-label">Elapsed</span><span class="timer-val" id="stElapsedTime">0:00</span></span>
+            <span class="timer-item"><span class="timer-label">ETA</span><span class="timer-val eta" id="stEtaTime">—</span></span>
+          </div>
+        </div>
+        <div class="log-bar" id="stLogBar" style="margin-bottom:1rem">&gt; SELECT A STATION AND CLICK SCAN<span class="cursor">_</span></div>
       </div>
     </div>
-    <div class="log-bar" id="stLogBar" style="margin-bottom:1rem">&gt; SELECT A STATION AND CLICK SCAN<span class="cursor">_</span></div>
     <div class="table-header">
       <div class="table-title">STATION TRADE OPPORTUNITIES <span style="color:var(--text-dim)" id="stResultCount"></span></div>
       <div class="table-filters">
@@ -1178,7 +1243,7 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
         <h3>Fastest way to get started</h3>
         <p>You're already on the Hub Trading tab. Try this:</p>
         <ul>
-          <li>Pick a data source from the three buttons: <span class="help-mode-pill raw">RAW ESI</span> <span class="help-mode-pill top">TOP 2000</span> <span class="help-mode-pill fuzz">FUZZWORK</span> — start with <b>FUZZWORK</b> for broad discovery.</li>
+          <li>Pick a data source from the two buttons: <span class="help-mode-pill raw">RAW ESI</span> <span class="help-mode-pill fuzz">FUZZWORK</span> — start with <b>FUZZWORK</b> for broad discovery.</li>
           <li>Leave the filters at defaults: 5% Min Margin, 10 Min Daily Vol, 10,000 Min Profit ISK, 10,000 m³ Cargo.</li>
           <li>Click <span class="hk">▶ SCAN ALL</span>. First scan is 3-10 minutes; later scans are much faster thanks to caching.</li>
           <li>When it's done, the results table is sorted by Margin %. Click any column header to re-sort.</li>
@@ -1186,11 +1251,10 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
           <li>Click <span class="hk">☆</span> on rows you want to track over time — they'll appear in the Watchlist tab.</li>
         </ul>
 
-        <h3>Three data sources — which to pick?</h3>
+        <h3>Two data sources — which to pick?</h3>
         <ul>
-          <li><span class="help-mode-pill raw">RAW ESI</span> — Full market dump, most precise. Slowest on first run (5-15 min cold), fast on re-scans. Use when you need the absolute freshest prices.</li>
-          <li><span class="help-mode-pill top">TOP 2000</span> — Scans only ~320 popular items plus anything "learned" from past Raw scans. Medium speed, station-precise. Good for quick re-checks.</li>
-          <li><span class="help-mode-pill fuzz">FUZZWORK</span> — Scans the full universe (~15-20k items) via a third-party aggregator. Fastest for broad discovery. Data up to ~30 minutes stale. Cross-check high-value results against Raw ESI before committing ISK.</li>
+          <li><span class="help-mode-pill raw">RAW ESI</span> — Full market dump direct from CCP's ESI API. Most precise; shows every live order at every NPC hub station. Cold scan typically 1-3 minutes; warm re-scans ~20-40 seconds thanks to response caching.</li>
+          <li><span class="help-mode-pill fuzz">FUZZWORK</span> — Scans the full universe (~15-20k items) via a third-party aggregator. Fastest for broad discovery (often under 30 seconds warm). Data up to ~30 minutes stale. Cross-check high-value results against Raw ESI before committing ISK.</li>
         </ul>
 
         <h3>When in doubt</h3>
@@ -1359,119 +1423,14 @@ const HUBS = {
 
 // ============================================================
 // DATA SOURCE MODES
-// Three strategies for pulling market data:
+// Two strategies for pulling market data:
 //   'esi'  — RAW ESI. Full region bulk dump. Slowest but fully precise —
-//            every order at every NPC hub station. Learned-typeIds list
-//            gets extended from every successful scan.
-//   'top'  — TOP 2000. Per-typeId ESI queries limited to a curated list
-//            (seed + learned). Moderate speed, full station-level precision,
-//            but only covers items in the list.
-//   'fuzz' — FUZZWORK. Pre-aggregated region data from market.fuzzwork.co.uk.
-//            Fastest, but region-level precision — may reflect non-hub
-//            orders (e.g., citadels or remote NPC stations).
+//            every order at every NPC hub station.
+//   'fuzz' — FUZZWORK. Pre-aggregated data from market.fuzzwork.co.uk
+//            pinned to each hub station. Fastest, but data can be up to
+//            ~30 minutes stale.
 // ============================================================
 
-// Seed list — ~320 of the most reliably-traded typeIds across EVE.
-// Hand-curated so TOP 2000 / FUZZWORK work immediately on first use, before
-// any learned data is collected. Covers: minerals, ice products, moon goo,
-// PI tier 1-4, ammo (hybrid/projectile/laser/missile), core T1 modules,
-// popular T2 modules, implants, boosters, common ships, drones, fuel.
-const TOP_TYPE_SEED = [
-  // Minerals
-  34,35,36,37,38,39,40,11399,
-  // Ice products
-  16272,16273,16274,16275,17887,17888,17889,44,
-  // Moon goo / materials
-  16633,16634,16635,16636,16637,16638,16639,16640,16641,16642,16643,16644,16646,16647,16648,16649,16650,16651,
-  // Compressed ores (most-traded)
-  62463,62464,62465,62466,62467,62468,62469,62470,62471,62472,62473,62474,62475,62476,62477,62478,62479,62480,
-  // PI Tier 1-2 (most-traded)
-  2268,2270,2305,2306,2307,2308,2309,2310,2311,2312,2317,2318,2319,2321,2327,2328,2329,2344,2345,2346,2348,
-  2349,2351,2352,2353,2354,2358,2360,2361,2389,2390,2392,2393,2395,2396,2397,2398,2399,2400,2401,
-  // PI Tier 3-4 (high-value)
-  9828,9832,9834,9835,9836,9838,9840,9842,9846,9848,12836,17136,28974,2867,2868,2869,2870,2871,2872,2875,2876,2877,
-  // Hybrid ammo (all racial)
-  220,221,222,223,224,225,226,227,228,229,230,231,232,233,234,235,
-  239,240,3010,3012,21892,21894,21896,21898,21900,21902,21904,21906,
-  // Projectile ammo
-  209,210,211,212,213,214,215,216,217,218,219,
-  // Laser crystals (common T1/T2)
-  185,186,187,188,189,190,191,192,193,194,195,196,197,198,199,200,201,202,203,204,205,206,207,208,
-  23083,23085,23087,23089,23091,23093,23095,23097,
-  // Missiles
-  204,205,266,267,268,269,270,2629,2630,2631,2633,2634,2635,2675,2679,2680,2681,
-  27361,27371,27381,27385,27387,27389,27441,30779,30785,
-  // Frigate T1 hulls
-  582,583,584,585,586,587,588,589,590,591,592,593,594,595,596,597,598,599,
-  // Cruiser T1 hulls  
-  620,621,622,623,624,625,626,627,628,629,
-  // Battleship T1 hulls
-  638,639,640,641,642,643,644,645,
-  // Mining/industrial
-  648,649,650,651,652,1944,17932,19720,20183,20185,20187,20189,28844,28846,28848,28850,
-  // Popular T2 ships (select)
-  11174,11176,11178,11192,11194,11196,11198,11200,11202,11365,11371,11377,11379,
-  // Shield/armor modules (common T1)
-  2046,2048,3244,3831,3829,5055,5057,14272,14278,14280,11301,11269,
-  // Damage mods
-  519,520,521,1306,1307,1308,1319,1998,2048,5839,5973,6001,
-  // Propulsion
-  438,439,440,12054,12056,12058,12066,12068,12076,434,435,437,
-  // Capacitor / cap booster
-  261,262,263,264,265,
-  // Tank modules (popular T2)
-  1541,1952,1999,2000,2001,2002,2003,3511,3841,
-  // Drones (common T1 + T2 Hammerhead/Hobgoblin/Warrior/Valkyrie lines)
-  2175,2185,2203,2205,2444,2446,2454,2456,2476,2478,3549,3551,28209,28211,
-  // Implants (common attribute +3/+4)
-  3408,3409,3410,3411,27122,27123,27124,27125,27126,27127,33517,33519,33521,33523,
-  // Boosters (combat)
-  10146,10147,10148,10149,10152,10153,10154,10155,28674,28676,28678,28680,28682,
-  // Fuel blocks
-  4051,4246,4247,4312,
-  // PLEX & common commodities
-  44992,40520,28668,3468,3689,3693,3689,3691,
-  // Skill injectors / Skill Extractors
-  40519,40520,45635,45636,
-];
-
-// Get the effective "top typeIds" list for filtered scan modes. This combines
-// the seed list with any typeIds learned from previous RAW ESI scans (stored
-// in IndexedDB under the key 'learned-topset'). Deduplicated. Called every
-// scan so the list stays fresh as learned data grows.
-async function getTopTypeIds() {
-  const seed = new Set(TOP_TYPE_SEED);
-  try {
-    const entry = await dbGet('learned-topset');
-    if (entry && Array.isArray(entry.data)) {
-      entry.data.forEach(id => seed.add(id));
-    }
-  } catch(e) {}
-  return [...seed];
-}
-
-// Persist the set of typeIds that had real 7-day trading volume in the last
-// RAW ESI scan. This builds up the "learned" portion of the Top 2000 list.
-// Capped at 3000 entries so the list doesn't grow unboundedly.
-async function saveLearnedTopSet(typeIds) {
-  if (!typeIds || !typeIds.length) return;
-  try {
-    // Merge with existing learned set
-    const existing = await dbGet('learned-topset');
-    const merged = new Set(typeIds);
-    if (existing && Array.isArray(existing.data)) {
-      existing.data.forEach(id => merged.add(id));
-    }
-    const final = [...merged].slice(0, 3000);
-    await dbPut({
-      cacheKey: 'learned-topset',
-      data: final,
-      expires: Date.now() + 30 * 24 * 60 * 60 * 1000,  // 30 days
-      etag: null, size: JSON.stringify(final).length, hits: 0,
-      fetchedAt: Date.now()
-    });
-  } catch(e) {}
-}
 
 // Full tradeable typeId list — union of /markets/{region}/types/ across all
 // enabled hub regions. This is the complete market universe for those hubs
@@ -1542,8 +1501,21 @@ async function getAllTradeableTypeIds(regionIds) {
 }
 
 // Current data source mode — per-tab, persisted in localStorage.
-let dataSource   = localStorage.getItem('eve-arb-ds')    || 'esi';
-let stDataSource = localStorage.getItem('eve-arb-st-ds') || 'esi';
+// TOP 2000 mode was removed — migrate any stale 'top' preference to 'esi'
+// so users who had it selected before the update don't land in an orphaned
+// state where no data-source button is active.
+function _migrateStaleDs(raw) {
+  if (raw === 'top') return 'esi';
+  if (raw === 'esi' || raw === 'fuzz') return raw;
+  return 'esi';
+}
+let dataSource   = _migrateStaleDs(localStorage.getItem('eve-arb-ds'));
+let stDataSource = _migrateStaleDs(localStorage.getItem('eve-arb-st-ds'));
+// Rewrite the migrated values back so we don't keep translating on each load
+try {
+  localStorage.setItem('eve-arb-ds',    dataSource);
+  localStorage.setItem('eve-arb-st-ds', stDataSource);
+} catch {}
 
 // Packaged volumes (m³) for common item categories from SDE — eliminates universe/types calls for known items.
 // Keyed by typeId. Populated progressively via batch name resolution which also returns packaged_volume.
@@ -2450,52 +2422,6 @@ async function fetchRegionOrders(regionId) {
 }
 
 // ============================================================
-// TOP 2000 MODE — per-typeId ESI fetch
-// Scans only the typeIds in the seed+learned list. Much faster than the
-// bulk dump for warm caches (per-type endpoints cache independently and
-// revalidate in sub-second time). Station-level precision is preserved.
-// Returns the SAME order shape as fetchRegionOrders so downstream code
-// doesn't need to care which mode produced it.
-// ============================================================
-async function fetchRegionOrdersTop2000(regionId, typeIds) {
-  const hubName = HUBS[regionId]?.name || regionId;
-  bulkProgress[regionId] = { name: hubName, fetched: 0, total: typeIds.length };
-
-  const allOrders = [];
-  const CONCURRENCY = 20;  // Per-type calls are tiny — we can push harder than bulk
-  let idx = 0;
-  let failed = 0;
-
-  async function worker() {
-    while (idx < typeIds.length && !isStopped()) {
-      const myIdx = idx++;
-      const tid = typeIds[myIdx];
-      try {
-        await checkThrottle();
-        const resp = await fetchWithTimeout(
-          `https://esi.evetech.net/latest/markets/${regionId}/orders/?order_type=all&type_id=${tid}`,
-          12000
-        );
-        parseRateHeaders(resp.headers);
-        if (resp.ok) {
-          const data = await resp.json();
-          if (Array.isArray(data)) allOrders.push(...data);
-        } else if (resp.status !== 404) {
-          failed++;
-        }
-      } catch(e) { failed++; }
-      bulkProgress[regionId].fetched++;
-      if (bulkProgress[regionId].fetched % 25 === 0) reportBulkProgress();
-    }
-  }
-
-  await Promise.all(Array.from({ length: CONCURRENCY }, worker));
-  reportBulkProgress();
-  if (failed > 0) log(`${hubName}: ${failed} of ${typeIds.length} type queries failed`);
-  return allOrders;
-}
-
-// ============================================================
 // FUZZWORK MODE — aggregated market data
 // Fuzzwork returns pre-computed aggregates per typeId, refreshed every
 // 30 minutes. Single HTTP call per batch of typeIds (we chunk at ~200
@@ -2504,8 +2430,8 @@ async function fetchRegionOrdersTop2000(regionId, typeIds) {
 // We use the ?station={stationId} variant, NOT ?region={regionId}, so
 // aggregates are pinned to just the hub's NPC station (e.g. Jita IV-4,
 // Amarr VIII-Oris). This matches the station-level precision used by
-// RAW ESI and TOP 2000 modes — no more picking up prices from citadels
-// or out-of-the-way stations elsewhere in the region.
+// RAW ESI mode — no more picking up prices from citadels or out-of-the-
+// way stations elsewhere in the region.
 //
 // The returned sell.min / buy.max are the lowest ask / highest bid at
 // THAT STATION specifically. We synthesize "virtual orders" at those
@@ -2817,12 +2743,10 @@ function setVolWindow(win) {
 // ============================================================
 const DS_DESCRIPTIONS = {
   'esi':  '<b>Raw ESI:</b> Full bulk market dump — slowest, most precise. Every order at every hub.',
-  'top':  '<b>Top 2000:</b> Per-item ESI query for ~320 core items + any learned from past Raw ESI scans. Moderate speed, same station-level precision.',
   'fuzz': '<b>Fuzzwork:</b> Pre-aggregated data pinned to each hub station, batched 200 items per request. Fastest mode, scans the full market universe (~15-20k items). <span style="color:var(--amber)">Data may be up to ~30 min stale.</span>'
 };
 const ST_DS_DESCRIPTIONS = {
   'esi':  '<b>Raw ESI:</b> Full region dump filtered to this station — slowest, most precise.',
-  'top':  '<b>Top 2000:</b> Per-item ESI query for core + learned items. Moderate speed, station-level precision.',
   'fuzz': '<b>Fuzzwork:</b> Pre-aggregated data from a third-party market cache. Fastest mode, covers the full universe of tradeable items. Data may be up to ~30 minutes stale; a small fraction of prices may reflect nearby citadel orders rather than strictly NPC-station. Cross-check high-value trades against Raw ESI before committing ISK.'
 };
 
@@ -2851,7 +2775,6 @@ function stSetDataSource(mode) {
 // Unified fetch wrapper — picks the right backend based on current mode.
 // Used by both Hub Trading and Station Trading scans.
 async function fetchHubOrders(regionId, mode, typeIds) {
-  if (mode === 'top')  return fetchRegionOrdersTop2000(regionId, typeIds || []);
   if (mode === 'fuzz') return fetchRegionOrdersFuzzwork(regionId, typeIds || []);
   return fetchRegionOrders(regionId);
 }
@@ -3144,6 +3067,49 @@ function log(msg) {
   const which = bulkProgressTab === 'station' ? 'station' : 'hub';
   pushLog(which, msg);
 }
+
+// ────────────────────────────────────────────────────────────────────
+// SCAN DETAILS COLLAPSE / EXPAND
+// During a scan the user wants to watch live progress. After the scan
+// completes, the log bar + progress bar just take up screen space above
+// the results. We collapse them into a single-line summary that can be
+// clicked to re-expand if the user wants to review what happened.
+// ────────────────────────────────────────────────────────────────────
+function _scanDetailsEl(which) {
+  return document.getElementById(which === 'station' ? 'stScanDetails' : 'hubScanDetails');
+}
+function expandScanDetails(which) {
+  const el = _scanDetailsEl(which);
+  if (el) el.classList.remove('collapsed');
+}
+function collapseScanDetails(which, summaryInfo) {
+  const el = _scanDetailsEl(which);
+  if (!el) return;
+  // Update the summary line with the final scan result before collapsing
+  const prefix = which === 'station' ? 'stScan' : 'hubScan';
+  const icon = document.getElementById(prefix + 'SummaryIcon');
+  const text = document.getElementById(prefix + 'SummaryText');
+  const time = document.getElementById(prefix + 'SummaryTime');
+  if (summaryInfo) {
+    if (icon) {
+      icon.textContent = summaryInfo.icon || '✓';
+      icon.className = 'scan-summary-icon ' + (summaryInfo.iconClass || 'ok');
+    }
+    if (text) text.textContent = summaryInfo.text || 'Scan complete';
+    if (time) time.textContent = summaryInfo.time || '';
+  }
+  // Make the "hide details" button available for future expansions —
+  // it only appears after a scan has completed at least once.
+  const collapseBtn = document.getElementById(prefix + 'CollapseBtn');
+  if (collapseBtn) collapseBtn.classList.add('available');
+  el.classList.add('collapsed');
+}
+function toggleScanDetails(which) {
+  const el = _scanDetailsEl(which);
+  if (el) el.classList.toggle('collapsed');
+}
+// Expose these so inline onclick handlers can reach them
+window.toggleScanDetails = toggleScanDetails;
 function setProgress(pct, text, sub) {
   document.getElementById('progressBar').style.width = Math.min(100, pct) + '%';
   document.getElementById('progressText').textContent = text;
@@ -3270,6 +3236,12 @@ function stopScan() {
   stopTimer();
   scanActive = false;
   setScanButtonsForMutex();
+  const elapsed = scanStartTime ? formatDuration(Date.now() - scanStartTime) : '';
+  collapseScanDetails('hub', {
+    icon: '!', iconClass: 'warn',
+    text: 'Scan aborted by user',
+    time: elapsed ? `Elapsed ${elapsed}` : ''
+  });
 }
 
 async function startScan() {
@@ -3279,6 +3251,8 @@ async function startScan() {
   scanActive = true; stopFlag = false;
   allResults = []; filteredResults = []; scanAllResults = [];
   cacheHits = 0; cacheMisses = 0; cache304s = 0; bytesSaved = 0;
+  // Expand the details panel so the user can watch live progress
+  expandScanDetails('hub');
   // Clear any stale per-hub progress from a previous scan
   Object.keys(bulkProgress).forEach(k => delete bulkProgress[k]);
   // Reset diagnostics for the new scan
@@ -3316,22 +3290,13 @@ async function startScan() {
   const regionOrderMaps = {};
   let totalOrders = 0;
 
-  // If we're in a filtered mode (top/fuzz), get the typeIds list up front.
-  // TOP 2000 and FUZZWORK need a typeIds list, but what list differs:
-  //
-  // TOP 2000 — per-item ESI queries. Speed scales inversely with list size,
-  // so we keep it tight: curated seed (~320 popular items) plus up to 3000
-  // items "learned" from prior RAW scans.
-  //
-  // FUZZWORK — server-side aggregated, batched 200 items per URL. Scales
-  // extremely well. Worth scanning the FULL market universe — typically
-  // 15-20k unique typeIds across the five hub regions — so we see every
-  // real arbitrage opportunity, not just the curated list.
+  // If we're in FUZZWORK mode, load the full tradeable typeId list up front.
+  // Fuzzwork is server-side aggregated and batches 200 items per URL, so it
+  // scales extremely well — worth scanning the full ~15-20k typeId universe
+  // to surface every real arbitrage opportunity. RAW ESI doesn't need a
+  // typeIds list since its bulk endpoint dumps the entire region at once.
   let modeTypeIds = null;
-  if (dataSource === 'top') {
-    modeTypeIds = await getTopTypeIds();
-    log(`TOP 2000 mode: scanning ${modeTypeIds.length} typeIds (${TOP_TYPE_SEED.length} seed + ${modeTypeIds.length - TOP_TYPE_SEED.length} learned)`);
-  } else if (dataSource === 'fuzz') {
+  if (dataSource === 'fuzz') {
     log(`FUZZWORK mode: loading full tradeable types list across ${hubs.length} regions...`);
     modeTypeIds = await getAllTradeableTypeIds(hubs);
     log(`FUZZWORK mode: scanning ${modeTypeIds.length.toLocaleString()} tradeable typeIds across all selected hubs`);
@@ -3377,10 +3342,10 @@ async function startScan() {
   // ESI's bulk endpoint has a ~5 min cache and can miss recently-posted orders.
   // For any typeId present in one hub's typeMap but absent in another hub's typeMap,
   // do a direct per-typeId fetch for the missing hub to catch those orders.
-  // Only runs in RAW ESI mode — TOP 2000 already does per-type fetches (nothing
-  // to gap-fill), and FUZZWORK aggregates can't be gap-filled with ESI data.
+  // Only runs in RAW ESI mode — FUZZWORK aggregates can't be gap-filled with
+  // ESI data.
   if (dataSource !== 'esi') {
-    log(`GAP-FILL SKIPPED — ${dataSource.toUpperCase()} mode fetches per-type already`);
+    log(`GAP-FILL SKIPPED — ${dataSource.toUpperCase()} mode uses pre-aggregated data`);
   } else {
   log('CHECKING FOR BULK FEED GAPS...');
   const allKnownTypeIds = new Set();
@@ -3646,23 +3611,6 @@ async function startScan() {
   log(`COMPLETE · ${allResults.length} opps · ${totalOrders.toLocaleString()} orders fetched · ${cacheHits} cache hits · ${cache304s} 304s`);
   setProgress(100, `Scan complete — ${allResults.length} opportunities found`, '100%');
 
-  // Harvest typeIds with real trading activity (7d volume > 0) from this
-  // scan and persist them to IndexedDB. This grows the learned portion of
-  // the Top 2000 list — subsequent TOP / FUZZ scans will cover more items.
-  // Only fires in RAW ESI mode — that's the only mode that sees the full
-  // universe of items.
-  if (dataSource === 'esi') {
-    const learned = [...new Set(
-      filtered
-        .filter(o => (o.dailyVol7 || 0) > 0)
-        .map(o => o.typeId)
-    )];
-    if (learned.length) {
-      saveLearnedTopSet(learned);
-      log(`LEARNED: added ${learned.length} typeIds to Top 2000 list for next fast scan`);
-    }
-  }
-
   finishScan();
 }
 
@@ -3678,6 +3626,14 @@ function finishScan() {
   document.getElementById('workingBadge').classList.remove('active');
   stopTimer();
   setScanButtonsForMutex();
+  // Collapse the live details into a compact summary. The user can click
+  // the summary bar to re-expand and review scan diagnostics if desired.
+  const elapsed = scanStartTime ? formatDuration(Date.now() - scanStartTime) : '';
+  collapseScanDetails('hub', {
+    icon: '✓', iconClass: 'ok',
+    text: `Scan complete — ${allResults.length.toLocaleString()} opportunities`,
+    time: elapsed ? `Elapsed ${elapsed}` : ''
+  });
 }
 
 // ============================================================
@@ -4049,12 +4005,8 @@ function renderWatchlistRow(w) {
   const refreshCls = hasMultipleSnaps ? 'color:var(--text)' : 'color:var(--text-muted)';
 
   // Mode badge styling — color the data source per scan
-  const modeColor = snap.dataSource === 'fuzz' ? 'var(--purple)'
-                  : snap.dataSource === 'top'  ? 'var(--amber)'
-                  :                              'var(--cyan)';
-  const modeLabel = snap.dataSource === 'fuzz' ? 'FUZZ'
-                  : snap.dataSource === 'top'  ? 'TOP'
-                  :                              'ESI';
+  const modeColor = snap.dataSource === 'fuzz' ? 'var(--purple)' : 'var(--cyan)';
+  const modeLabel = snap.dataSource === 'fuzz' ? 'FUZZ'           : 'ESI';
 
   if (w.entryType === 'hub') {
     const bCls = HUBS[w.buyHubId]?.cls || '';
@@ -4213,8 +4165,8 @@ function exportCSV() {
 //
 // Data sources:
 //   'fuzz' — batch-fetch via Fuzzwork aggregates (1 request per ~200 items)
-//   'esi' / 'top' — per-item ESI orders endpoint for prices, per-item history
-//     for volumes. Slower but station-precise.
+//   'esi'  — per-item ESI orders endpoint for prices, per-item history for
+//            volumes. Slower but station-precise.
 //
 // Volumes come from /markets/{region}/history/ (cached for 24h).
 // Category IDs come from batch name resolution if missing.
@@ -4665,9 +4617,16 @@ function stopStationScan() {
   document.getElementById('stScanBtn').classList.remove('running');
   document.getElementById('stStopBtn').style.display = 'none';
   document.getElementById('stWorkingBadge').classList.remove('active');
+  const elapsedEl = document.getElementById('stElapsedTime');
+  const elapsed = elapsedEl ? elapsedEl.textContent : '';
   stopTimer();
   stScanActive = false;
   setScanButtonsForMutex();
+  collapseScanDetails('station', {
+    icon: '!', iconClass: 'warn',
+    text: 'Scan aborted by user',
+    time: elapsed ? `Elapsed ${elapsed}` : ''
+  });
 }
 
 async function startStationScan() {
@@ -4682,6 +4641,8 @@ async function startStationScan() {
   const stDormantFilter = '7d';
 
   stScanActive = true; stStopFlag = false; stResults = []; stScanAllResults = [];
+  // Expand the details panel so the user can watch live progress
+  expandScanDetails('station');
   // Clear any stale per-hub progress from a previous scan (in either tab)
   Object.keys(bulkProgress).forEach(k => delete bulkProgress[k]);
   // Reset diagnostics for the new scan
@@ -4706,10 +4667,7 @@ async function startStationScan() {
   stLog(`FETCHING ALL ORDERS FOR ${hub.name.toUpperCase()} (${stDataSource.toUpperCase()} mode)...`);
   stSetProgress(0, `Fetching ${hub.name} — mode: ${stDataSource}`, '');
   let stModeTypeIds = null;
-  if (stDataSource === 'top') {
-    stModeTypeIds = await getTopTypeIds();
-    stLog(`TOP 2000 mode: scanning ${stModeTypeIds.length} typeIds`);
-  } else if (stDataSource === 'fuzz') {
+  if (stDataSource === 'fuzz') {
     stLog(`FUZZWORK mode: loading full tradeable types list for ${hub.name}...`);
     stModeTypeIds = await getAllTradeableTypeIds([hubId]);
     stLog(`FUZZWORK mode: scanning ${stModeTypeIds.length.toLocaleString()} tradeable typeIds at ${hub.name}`);
@@ -4745,8 +4703,8 @@ async function startStationScan() {
   // The bulk feed can miss items (ESI cache lag). We get the full list of
   // active typeIds from the region types endpoint and fetch any that are
   // absent from our typeMap individually.
-  // Only runs in RAW ESI mode — TOP 2000 already fetches per-type so nothing
-  // would be missing, and FUZZWORK data is aggregates and not gap-fillable.
+  // Only runs in RAW ESI mode — FUZZWORK data is aggregated and not
+  // gap-fillable against ESI per-item orders.
   if (stDataSource !== 'esi') {
     stLog(`GAP-FILL SKIPPED — ${stDataSource.toUpperCase()} mode`);
   } else {
@@ -5063,8 +5021,17 @@ function stFinish() {
   document.getElementById('stScanBtn').classList.remove('running');
   document.getElementById('stStopBtn').style.display = 'none';
   document.getElementById('stWorkingBadge').classList.remove('active');
+  // Capture elapsed before stopTimer resets it — the Elapsed value is already
+  // formatted by the timer tick function.
+  const elapsedEl = document.getElementById('stElapsedTime');
+  const elapsed = elapsedEl ? elapsedEl.textContent : '';
   stopTimer();
   setScanButtonsForMutex();
+  collapseScanDetails('station', {
+    icon: '✓', iconClass: 'ok',
+    text: `Scan complete — ${stResults.length.toLocaleString()} opportunities`,
+    time: elapsed ? `Elapsed ${elapsed}` : ''
+  });
 }
 
 function sortStTable(key) {
