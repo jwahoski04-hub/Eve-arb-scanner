@@ -331,6 +331,51 @@ html,body{
 .progress-bar-wrap{height:3px;background:var(--surface2);border-radius:2px;overflow:hidden;margin-bottom:5px;}
 .progress-bar{height:100%;background:linear-gradient(90deg,var(--cyan),var(--green));border-radius:2px;transition:width 0.3s;width:0%;}
 .progress-info{display:flex;justify-content:space-between;}
+/* Data source mode selector — prominent row at the top of Hub Trading.
+   Three mutually exclusive modes: RAW ESI (slow, precise), TOP 2000
+   (moderate, precise), FUZZWORK (fastest, region-level). Each gets its
+   own accent color so the active mode is unmistakable at a glance. */
+.data-source-row{
+  display:flex;align-items:center;gap:12px;padding:10px 14px;margin-bottom:12px;
+  background:linear-gradient(180deg, rgba(74,214,255,0.06), rgba(74,214,255,0.02));
+  border:1px solid var(--border-ds);border-radius:3px;flex-wrap:wrap;
+}
+.data-source-label{
+  font-family:var(--font-sans);font-size:11px;color:var(--text-1);
+  letter-spacing:0.8px;text-transform:uppercase;font-weight:600;margin-right:2px;
+}
+.data-source-toggle{
+  display:inline-flex;border:1px solid var(--border-bright);border-radius:3px;
+  overflow:hidden;background:var(--bg-0);
+}
+.ds-btn{
+  background:transparent;border:none;border-right:1px solid var(--border-ds);
+  color:var(--text-2);font-family:var(--font-mono);font-size:11px;font-weight:500;
+  padding:7px 16px;cursor:pointer;transition:all 0.15s;user-select:none;
+  letter-spacing:0.4px;display:inline-flex;align-items:center;gap:6px;
+}
+.ds-btn:last-child{border-right:none;}
+.ds-btn:hover{color:var(--text-0);background:rgba(74,214,255,0.05);}
+.ds-btn.active{font-weight:600;}
+/* Per-mode active colors */
+.ds-btn.ds-esi.active{background:rgba(74,214,255,0.15);color:var(--cyan);
+  box-shadow:inset 0 -2px 0 var(--cyan);}
+.ds-btn.ds-top.active{background:rgba(251,191,36,0.15);color:var(--gold);
+  box-shadow:inset 0 -2px 0 var(--gold);}
+.ds-btn.ds-fuzz.active{background:rgba(167,139,250,0.15);color:var(--purple);
+  box-shadow:inset 0 -2px 0 var(--purple);}
+.ds-speed-hint{
+  font-family:var(--mono);font-size:9px;padding:1px 6px;border-radius:2px;
+  background:var(--bg-2);color:var(--text-2);letter-spacing:0.3px;
+}
+.ds-speed-hint.slow{color:var(--red);}
+.ds-speed-hint.med{color:var(--amber);}
+.ds-speed-hint.fast{color:var(--green);}
+.ds-current-desc{
+  font-family:var(--font-sans);font-size:11px;color:var(--text-2);
+  font-style:italic;margin-left:auto;
+}
+.ds-current-desc b{color:var(--text-1);font-style:normal;font-weight:600;}
 .progress-text{font-family:var(--mono);font-size:10px;color:var(--text-muted);}
 .progress-pct{font-family:var(--mono);font-size:10px;color:var(--cyan);}
 /* Timer row — small monospace stats tucked below the main progress text */
@@ -580,6 +625,23 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
   <div class="panel active" id="panel-results">
 
     <div class="controls-panel">
+      <div class="data-source-row">
+        <span class="data-source-label">Data Source:</span>
+        <div class="data-source-toggle" role="group">
+          <button class="ds-btn ds-esi active" data-ds="esi" onclick="setDataSource('esi')" title="Full market dump from CCP's ESI API — all items, station-level precision. Slowest but most complete.">
+            RAW ESI <span class="ds-speed-hint slow">SLOW</span>
+          </button>
+          <button class="ds-btn ds-top" data-ds="top" onclick="setDataSource('top')" title="Limits the scan to the top 2,000 most-traded items. Uses ESI per-type queries — faster than full dump, same station-level precision.">
+            TOP 2000 <span class="ds-speed-hint med">MED</span>
+          </button>
+          <button class="ds-btn ds-fuzz" data-ds="fuzz" onclick="setDataSource('fuzz')" title="Uses Fuzzwork's pre-aggregated market data (updated every 30 min). Fastest, but region-level precision only — may pick up non-hub orders.">
+            FUZZWORK <span class="ds-speed-hint fast">FAST</span>
+          </button>
+        </div>
+        <div class="ds-current-desc" id="ds-desc">
+          <b>Raw ESI:</b> Full bulk market dump — slowest, most precise. Every order at every hub.
+        </div>
+      </div>
       <div class="ctrl-grid" style="grid-template-columns:repeat(11,minmax(0,1fr)) auto;">
         <div class="ctrl"><div class="ctrl-label">Min Margin %</div><input type="number" id="minMargin" value="5" min="0" max="100" step="0.5" /></div>
         <div class="ctrl"><div class="ctrl-label">Tax % (broker+tx)</div><input type="number" id="taxRate" value="3.6" min="0" max="15" step="0.1" /></div>
@@ -749,6 +811,23 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
 
   <div class="panel" id="panel-station">
     <div class="st-controls">
+      <div class="data-source-row">
+        <span class="data-source-label">Data Source:</span>
+        <div class="data-source-toggle" role="group">
+          <button class="ds-btn ds-esi active" data-st-ds="esi" onclick="stSetDataSource('esi')" title="Full market dump from CCP's ESI API — all items at the selected station. Slowest but most complete.">
+            RAW ESI <span class="ds-speed-hint slow">SLOW</span>
+          </button>
+          <button class="ds-btn ds-top" data-st-ds="top" onclick="stSetDataSource('top')" title="Limits to top 2,000 items — faster than full dump, same station-level precision.">
+            TOP 2000 <span class="ds-speed-hint med">MED</span>
+          </button>
+          <button class="ds-btn ds-fuzz" data-st-ds="fuzz" onclick="stSetDataSource('fuzz')" title="Uses Fuzzwork's pre-aggregated data — fastest, but region-level precision only.">
+            FUZZWORK <span class="ds-speed-hint fast">FAST</span>
+          </button>
+        </div>
+        <div class="ds-current-desc" id="st-ds-desc">
+          <b>Raw ESI:</b> Full bulk market dump — slowest, most precise.
+        </div>
+      </div>
       <div class="st-ctrl-grid">
         <div class="ctrl"><div class="ctrl-label">Min ROI %</div><input type="number" id="st-minSpread" value="2" min="0" max="100" step="0.5" /></div>
         <div class="ctrl"><div class="ctrl-label">Tax % (broker+tx)</div><input type="number" id="st-taxRate" value="3.6" min="0" max="15" step="0.1" /></div>
@@ -903,6 +982,126 @@ const HUBS = {
   '10000042':{name:'Hek',     stationName:'Hek VIII - Moon 12 - Boundless Creation Factory',   station:60005686, system:30002053, cls:'hub-hek'},
   '10000030':{name:'Rens',    stationName:'Rens VI - Moon 8 - Brutor Tribe Treasury',           station:60004588, system:30002510, cls:'hub-rens'},
 };
+
+// ============================================================
+// DATA SOURCE MODES
+// Three strategies for pulling market data:
+//   'esi'  — RAW ESI. Full region bulk dump. Slowest but fully precise —
+//            every order at every NPC hub station. Learned-typeIds list
+//            gets extended from every successful scan.
+//   'top'  — TOP 2000. Per-typeId ESI queries limited to a curated list
+//            (seed + learned). Moderate speed, full station-level precision,
+//            but only covers items in the list.
+//   'fuzz' — FUZZWORK. Pre-aggregated region data from market.fuzzwork.co.uk.
+//            Fastest, but region-level precision — may reflect non-hub
+//            orders (e.g., citadels or remote NPC stations).
+// ============================================================
+
+// Seed list — ~320 of the most reliably-traded typeIds across EVE.
+// Hand-curated so TOP 2000 / FUZZWORK work immediately on first use, before
+// any learned data is collected. Covers: minerals, ice products, moon goo,
+// PI tier 1-4, ammo (hybrid/projectile/laser/missile), core T1 modules,
+// popular T2 modules, implants, boosters, common ships, drones, fuel.
+const TOP_TYPE_SEED = [
+  // Minerals
+  34,35,36,37,38,39,40,11399,
+  // Ice products
+  16272,16273,16274,16275,17887,17888,17889,44,
+  // Moon goo / materials
+  16633,16634,16635,16636,16637,16638,16639,16640,16641,16642,16643,16644,16646,16647,16648,16649,16650,16651,
+  // Compressed ores (most-traded)
+  62463,62464,62465,62466,62467,62468,62469,62470,62471,62472,62473,62474,62475,62476,62477,62478,62479,62480,
+  // PI Tier 1-2 (most-traded)
+  2268,2270,2305,2306,2307,2308,2309,2310,2311,2312,2317,2318,2319,2321,2327,2328,2329,2344,2345,2346,2348,
+  2349,2351,2352,2353,2354,2358,2360,2361,2389,2390,2392,2393,2395,2396,2397,2398,2399,2400,2401,
+  // PI Tier 3-4 (high-value)
+  9828,9832,9834,9835,9836,9838,9840,9842,9846,9848,12836,17136,28974,2867,2868,2869,2870,2871,2872,2875,2876,2877,
+  // Hybrid ammo (all racial)
+  220,221,222,223,224,225,226,227,228,229,230,231,232,233,234,235,
+  239,240,3010,3012,21892,21894,21896,21898,21900,21902,21904,21906,
+  // Projectile ammo
+  209,210,211,212,213,214,215,216,217,218,219,
+  // Laser crystals (common T1/T2)
+  185,186,187,188,189,190,191,192,193,194,195,196,197,198,199,200,201,202,203,204,205,206,207,208,
+  23083,23085,23087,23089,23091,23093,23095,23097,
+  // Missiles
+  204,205,266,267,268,269,270,2629,2630,2631,2633,2634,2635,2675,2679,2680,2681,
+  27361,27371,27381,27385,27387,27389,27441,30779,30785,
+  // Frigate T1 hulls
+  582,583,584,585,586,587,588,589,590,591,592,593,594,595,596,597,598,599,
+  // Cruiser T1 hulls  
+  620,621,622,623,624,625,626,627,628,629,
+  // Battleship T1 hulls
+  638,639,640,641,642,643,644,645,
+  // Mining/industrial
+  648,649,650,651,652,1944,17932,19720,20183,20185,20187,20189,28844,28846,28848,28850,
+  // Popular T2 ships (select)
+  11174,11176,11178,11192,11194,11196,11198,11200,11202,11365,11371,11377,11379,
+  // Shield/armor modules (common T1)
+  2046,2048,3244,3831,3829,5055,5057,14272,14278,14280,11301,11269,
+  // Damage mods
+  519,520,521,1306,1307,1308,1319,1998,2048,5839,5973,6001,
+  // Propulsion
+  438,439,440,12054,12056,12058,12066,12068,12076,434,435,437,
+  // Capacitor / cap booster
+  261,262,263,264,265,
+  // Tank modules (popular T2)
+  1541,1952,1999,2000,2001,2002,2003,3511,3841,
+  // Drones (common T1 + T2 Hammerhead/Hobgoblin/Warrior/Valkyrie lines)
+  2175,2185,2203,2205,2444,2446,2454,2456,2476,2478,3549,3551,28209,28211,
+  // Implants (common attribute +3/+4)
+  3408,3409,3410,3411,27122,27123,27124,27125,27126,27127,33517,33519,33521,33523,
+  // Boosters (combat)
+  10146,10147,10148,10149,10152,10153,10154,10155,28674,28676,28678,28680,28682,
+  // Fuel blocks
+  4051,4246,4247,4312,
+  // PLEX & common commodities
+  44992,40520,28668,3468,3689,3693,3689,3691,
+  // Skill injectors / Skill Extractors
+  40519,40520,45635,45636,
+];
+
+// Get the effective "top typeIds" list for filtered scan modes. This combines
+// the seed list with any typeIds learned from previous RAW ESI scans (stored
+// in IndexedDB under the key 'learned-topset'). Deduplicated. Called every
+// scan so the list stays fresh as learned data grows.
+async function getTopTypeIds() {
+  const seed = new Set(TOP_TYPE_SEED);
+  try {
+    const entry = await dbGet('learned-topset');
+    if (entry && Array.isArray(entry.data)) {
+      entry.data.forEach(id => seed.add(id));
+    }
+  } catch(e) {}
+  return [...seed];
+}
+
+// Persist the set of typeIds that had real 7-day trading volume in the last
+// RAW ESI scan. This builds up the "learned" portion of the Top 2000 list.
+// Capped at 3000 entries so the list doesn't grow unboundedly.
+async function saveLearnedTopSet(typeIds) {
+  if (!typeIds || !typeIds.length) return;
+  try {
+    // Merge with existing learned set
+    const existing = await dbGet('learned-topset');
+    const merged = new Set(typeIds);
+    if (existing && Array.isArray(existing.data)) {
+      existing.data.forEach(id => merged.add(id));
+    }
+    const final = [...merged].slice(0, 3000);
+    await dbPut({
+      cacheKey: 'learned-topset',
+      data: final,
+      expires: Date.now() + 30 * 24 * 60 * 60 * 1000,  // 30 days
+      etag: null, size: JSON.stringify(final).length, hits: 0,
+      fetchedAt: Date.now()
+    });
+  } catch(e) {}
+}
+
+// Current data source mode — per-tab, persisted in localStorage.
+let dataSource   = localStorage.getItem('eve-arb-ds')    || 'esi';
+let stDataSource = localStorage.getItem('eve-arb-st-ds') || 'esi';
 
 // Packaged volumes (m³) for common item categories from SDE — eliminates universe/types calls for known items.
 // Keyed by typeId. Populated progressively via batch name resolution which also returns packaged_volume.
@@ -1481,6 +1680,150 @@ async function fetchRegionOrders(regionId) {
 }
 
 // ============================================================
+// TOP 2000 MODE — per-typeId ESI fetch
+// Scans only the typeIds in the seed+learned list. Much faster than the
+// bulk dump for warm caches (per-type endpoints cache independently and
+// revalidate in sub-second time). Station-level precision is preserved.
+// Returns the SAME order shape as fetchRegionOrders so downstream code
+// doesn't need to care which mode produced it.
+// ============================================================
+async function fetchRegionOrdersTop2000(regionId, typeIds) {
+  const hubName = HUBS[regionId]?.name || regionId;
+  bulkProgress[regionId] = { name: hubName, fetched: 0, total: typeIds.length };
+
+  const allOrders = [];
+  const CONCURRENCY = 20;  // Per-type calls are tiny — we can push harder than bulk
+  let idx = 0;
+  let failed = 0;
+
+  async function worker() {
+    while (idx < typeIds.length && !isStopped()) {
+      const myIdx = idx++;
+      const tid = typeIds[myIdx];
+      try {
+        await checkThrottle();
+        const resp = await fetchWithTimeout(
+          `https://esi.evetech.net/latest/markets/${regionId}/orders/?order_type=all&type_id=${tid}`,
+          12000
+        );
+        parseRateHeaders(resp.headers);
+        if (resp.ok) {
+          const data = await resp.json();
+          if (Array.isArray(data)) allOrders.push(...data);
+        } else if (resp.status !== 404) {
+          failed++;
+        }
+      } catch(e) { failed++; }
+      bulkProgress[regionId].fetched++;
+      if (bulkProgress[regionId].fetched % 25 === 0) reportBulkProgress();
+    }
+  }
+
+  await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+  reportBulkProgress();
+  if (failed > 0) log(`${hubName}: ${failed} of ${typeIds.length} type queries failed`);
+  return allOrders;
+}
+
+// ============================================================
+// FUZZWORK MODE — aggregated market data
+// Fuzzwork returns pre-computed aggregates per typeId per region, refreshed
+// every 30 minutes. Single HTTP call per hub (with types URL-encoded in
+// batches of ~200 to keep URLs under length limits). Aggregates include
+// min/max/median/volume/orderCount — we synthesize "virtual orders" from
+// these so downstream comparison code treats them identically to ESI orders.
+//
+// TRADEOFF: aggregates are region-level, not station-level. We tag the
+// synthesized orders with the hub's station/system id so downstream code
+// accepts them, but the underlying data may include citadels and non-hub
+// NPC stations. Usually matches ESI at the hubs closely, occasionally drifts.
+// ============================================================
+async function fetchRegionOrdersFuzzwork(regionId, typeIds) {
+  const hubName = HUBS[regionId]?.name || regionId;
+  const hub = HUBS[regionId];
+  const batches = [];
+  // Fuzzwork accepts many typeIds in the URL — ~200 keeps URLs safely under 8KB
+  for (let i = 0; i < typeIds.length; i += 200) {
+    batches.push(typeIds.slice(i, i + 200));
+  }
+  bulkProgress[regionId] = { name: hubName, fetched: 0, total: batches.length };
+
+  const allOrders = [];
+  // Fake order_id generator — must be unique across the whole scan
+  const fakeIdBase = Date.now() * 1000 + regionId * 10;
+  let fakeCounter = 0;
+
+  // Low concurrency — we're hitting one service, be polite
+  const CONCURRENCY = 4;
+  let idx = 0;
+  let failed = 0;
+
+  async function worker() {
+    while (idx < batches.length && !isStopped()) {
+      const myIdx = idx++;
+      const batch = batches[myIdx];
+      const url = `https://market.fuzzwork.co.uk/aggregates/?region=${regionId}&types=${batch.join(',')}`;
+      try {
+        const resp = await fetchWithTimeout(url, 20000);
+        if (resp.ok) {
+          const data = await resp.json();
+          // Fuzzwork returns { "34": { buy: {min,max,median,...}, sell: {...} }, ... }
+          for (const [tidStr, stats] of Object.entries(data)) {
+            const tid = parseInt(tidStr);
+            if (!stats) continue;
+            // Synthesize a sell order at the aggregate min (= best ask)
+            const sellMin = stats.sell && parseFloat(stats.sell.min);
+            const sellVol = stats.sell && parseFloat(stats.sell.volume);
+            const sellCnt = stats.sell && parseInt(stats.sell.orderCount);
+            if (sellMin > 0 && sellVol > 0) {
+              allOrders.push({
+                order_id: fakeIdBase + (fakeCounter++),
+                type_id: tid,
+                location_id: hub.station,  // Tag as hub station for downstream filter
+                system_id:   hub.system,
+                is_buy_order: false,
+                price: sellMin,
+                volume_remain: sellVol,
+                // Synthetic flag — we use this to treat Fuzzwork sell volume
+                // as one aggregated order when computing depth; sellOrderCount
+                // comes from Fuzzwork's orderCount directly.
+                _fuzzworkOrders: sellCnt,
+                _fuzzwork: true,
+              });
+            }
+            // Synthesize a buy order at the aggregate max (= best bid)
+            const buyMax = stats.buy && parseFloat(stats.buy.max);
+            const buyVol = stats.buy && parseFloat(stats.buy.volume);
+            const buyCnt = stats.buy && parseInt(stats.buy.orderCount);
+            if (buyMax > 0 && buyVol > 0) {
+              allOrders.push({
+                order_id: fakeIdBase + (fakeCounter++),
+                type_id: tid,
+                location_id: hub.station,
+                system_id:   hub.system,
+                is_buy_order: true,
+                price: buyMax,
+                volume_remain: buyVol,
+                _fuzzworkOrders: buyCnt,
+                _fuzzwork: true,
+              });
+            }
+          }
+        } else {
+          failed++;
+        }
+      } catch(e) { failed++; }
+      bulkProgress[regionId].fetched++;
+      reportBulkProgress();
+    }
+  }
+
+  await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+  if (failed > 0) log(`${hubName}: ${failed}/${batches.length} Fuzzwork batches failed`);
+  return allOrders;
+}
+
+// ============================================================
 // MARKET HISTORY (per-typeId, cached aggressively)
 // ============================================================
 // HISTORY — returns {v1, v7, v30} daily-volume averages (matches
@@ -1647,6 +1990,52 @@ function setVolWindow(win) {
 // ============================================================
 // CATEGORY / HUB CONTROLS
 // ============================================================
+// ============================================================
+// DATA SOURCE MODE SWITCH (UI)
+// Radio-style — clicking sets the current mode for the tab.
+// Persists to localStorage and updates the description text.
+// ============================================================
+const DS_DESCRIPTIONS = {
+  'esi':  '<b>Raw ESI:</b> Full bulk market dump — slowest, most precise. Every order at every hub.',
+  'top':  '<b>Top 2000:</b> Per-item ESI query for ~320 core items + any learned from past Raw ESI scans. Moderate speed, same station-level precision.',
+  'fuzz': '<b>Fuzzwork:</b> Pre-aggregated data (refreshed ~30 min). Fastest. <span style="color:var(--amber)">Region-level precision only</span> — may include citadel/non-hub orders.'
+};
+const ST_DS_DESCRIPTIONS = {
+  'esi':  '<b>Raw ESI:</b> Full region dump filtered to this station — slowest, most precise.',
+  'top':  '<b>Top 2000:</b> Per-item ESI query for core + learned items. Moderate speed, station-level precision.',
+  'fuzz': '<b>Fuzzwork:</b> Pre-aggregated data (refreshed ~30 min). Fastest. <span style="color:var(--amber)">Region-level precision only</span>.'
+};
+
+function setDataSource(mode) {
+  if (scanActive) return; // Can't switch mid-scan
+  dataSource = mode;
+  localStorage.setItem('eve-arb-ds', mode);
+  document.querySelectorAll('[data-ds]').forEach(b => {
+    b.classList.toggle('active', b.dataset.ds === mode);
+  });
+  const desc = document.getElementById('ds-desc');
+  if (desc) desc.innerHTML = DS_DESCRIPTIONS[mode] || '';
+}
+
+function stSetDataSource(mode) {
+  if (stScanActive) return;
+  stDataSource = mode;
+  localStorage.setItem('eve-arb-st-ds', mode);
+  document.querySelectorAll('[data-st-ds]').forEach(b => {
+    b.classList.toggle('active', b.dataset.stDs === mode);
+  });
+  const desc = document.getElementById('st-ds-desc');
+  if (desc) desc.innerHTML = ST_DS_DESCRIPTIONS[mode] || '';
+}
+
+// Unified fetch wrapper — picks the right backend based on current mode.
+// Used by both Hub Trading and Station Trading scans.
+async function fetchHubOrders(regionId, mode, typeIds) {
+  if (mode === 'top')  return fetchRegionOrdersTop2000(regionId, typeIds || []);
+  if (mode === 'fuzz') return fetchRegionOrdersFuzzwork(regionId, typeIds || []);
+  return fetchRegionOrders(regionId);
+}
+
 function toggleCat(btn) {
   const cat = btn.dataset.cat;
   if (cat === 'all') {
@@ -1986,15 +2375,23 @@ async function startScan() {
   const dormantFilter = document.getElementById('dormantFilter').value || 'off';
 
   // ── STEP 1: Fetch ALL orders for each region in bulk — ALL HUBS IN PARALLEL ──
-  log('BULK FETCHING ALL REGION ORDERS IN PARALLEL...');
-  setProgress(0, 'Fetching all hub regions simultaneously...', '');
+  log(`BULK FETCHING ALL REGION ORDERS (${dataSource.toUpperCase()} mode)...`);
+  setProgress(0, `Fetching all hub regions — mode: ${dataSource}`, '');
 
   const regionOrderMaps = {};
   let totalOrders = 0;
 
+  // If we're in a filtered mode (top/fuzz), get the typeIds list up front.
+  // Both modes use the same merged seed+learned set.
+  let modeTypeIds = null;
+  if (dataSource === 'top' || dataSource === 'fuzz') {
+    modeTypeIds = await getTopTypeIds();
+    log(`${dataSource.toUpperCase()} mode: scanning ${modeTypeIds.length} typeIds (${TOP_TYPE_SEED.length} seed + ${modeTypeIds.length - TOP_TYPE_SEED.length} learned)`);
+  }
+
   // Fetch all hubs simultaneously — biggest speed win
   const hubFetches = await Promise.all(
-    hubs.map(hubId => fetchRegionOrders(hubId).then(orders => ({ hubId, orders })))
+    hubs.map(hubId => fetchHubOrders(hubId, dataSource, modeTypeIds).then(orders => ({ hubId, orders })))
   );
 
   // Process results sequentially (DOM-safe, CPU-cheap)
@@ -2026,6 +2423,11 @@ async function startScan() {
   // ESI's bulk endpoint has a ~5 min cache and can miss recently-posted orders.
   // For any typeId present in one hub's typeMap but absent in another hub's typeMap,
   // do a direct per-typeId fetch for the missing hub to catch those orders.
+  // Only runs in RAW ESI mode — TOP 2000 already does per-type fetches (nothing
+  // to gap-fill), and FUZZWORK aggregates can't be gap-filled with ESI data.
+  if (dataSource !== 'esi') {
+    log(`GAP-FILL SKIPPED — ${dataSource.toUpperCase()} mode fetches per-type already`);
+  } else {
   log('CHECKING FOR BULK FEED GAPS...');
   const allKnownTypeIds = new Set();
   Object.values(regionOrderMaps).forEach(m => m.forEach((_, tid) => allKnownTypeIds.add(tid)));
@@ -2067,6 +2469,7 @@ async function startScan() {
     }
     if (gapsFilled > 0) log(`Gap-fill complete: added ${gapsFilled} items to station maps`);
   }
+  }  // end ESI-only gap-fill block
   log('RUNNING CROSS-HUB PRICE COMPARISON...');
   setProgress(40, 'Comparing prices across hubs...', '');
 
@@ -2236,6 +2639,23 @@ async function startScan() {
   document.getElementById('cacheAge').textContent = `SAVED ~${fmtBytes(bytesSaved)}`;
   log(`COMPLETE · ${allResults.length} opps · ${totalOrders.toLocaleString()} orders fetched · ${cacheHits} cache hits · ${cache304s} 304s`);
   setProgress(100, `Scan complete — ${allResults.length} opportunities found`, '100%');
+
+  // Harvest typeIds with real trading activity (7d volume > 0) from this
+  // scan and persist them to IndexedDB. This grows the learned portion of
+  // the Top 2000 list — subsequent TOP / FUZZ scans will cover more items.
+  // Only fires in RAW ESI mode — that's the only mode that sees the full
+  // universe of items.
+  if (dataSource === 'esi') {
+    const learned = [...new Set(
+      filtered
+        .filter(o => (o.dailyVol7 || 0) > 0)
+        .map(o => o.typeId)
+    )];
+    if (learned.length) {
+      saveLearnedTopSet(learned);
+      log(`LEARNED: added ${learned.length} typeIds to Top 2000 list for next fast scan`);
+    }
+  }
 
   finishScan();
 }
@@ -2679,9 +3099,14 @@ async function startStationScan() {
   setScanButtonsForMutex();
 
   // ── Step 1: Bulk fetch all region orders ──────────────────────────────
-  stLog(`FETCHING ALL ORDERS FOR ${hub.name.toUpperCase()}...`);
-  stSetProgress(0, `Fetching ${hub.name} region orders...`, '');
-  const orders = await fetchRegionOrders(hubId);
+  stLog(`FETCHING ALL ORDERS FOR ${hub.name.toUpperCase()} (${stDataSource.toUpperCase()} mode)...`);
+  stSetProgress(0, `Fetching ${hub.name} — mode: ${stDataSource}`, '');
+  let stModeTypeIds = null;
+  if (stDataSource === 'top' || stDataSource === 'fuzz') {
+    stModeTypeIds = await getTopTypeIds();
+    stLog(`${stDataSource.toUpperCase()} mode: scanning ${stModeTypeIds.length} typeIds`);
+  }
+  const orders = await fetchHubOrders(hubId, stDataSource, stModeTypeIds);
   if (stStopFlag) { stFinish(); return; }
 
   // ── Step 2: Index station orders ─────────────────────────────────────
@@ -2704,6 +3129,11 @@ async function startStationScan() {
   // The bulk feed can miss items (ESI cache lag). We get the full list of
   // active typeIds from the region types endpoint and fetch any that are
   // absent from our typeMap individually.
+  // Only runs in RAW ESI mode — TOP 2000 already fetches per-type so nothing
+  // would be missing, and FUZZWORK data is aggregates and not gap-fillable.
+  if (stDataSource !== 'esi') {
+    stLog(`GAP-FILL SKIPPED — ${stDataSource.toUpperCase()} mode`);
+  } else {
   stSetProgress(25, 'Checking for items missed by bulk fetch...', '');
   let allTypeIds = [];
   try {
@@ -2752,6 +3182,7 @@ async function startStationScan() {
     }));
   }
   stLog(`${hub.name}: ${typeMap.size.toLocaleString()} items after gap-fill`);
+  }  // end ESI-only gap-fill block
 
   // ── Step 3: Find spread opportunities ─────────────────────────────────
   // Two distinct opportunity types emerge from the bid/ask prices:
@@ -3049,6 +3480,9 @@ openDB().then(() => {
   if (vch) vch.textContent = currentVolWindow + 'd';
   const stvch = document.getElementById('st-volColHeader');
   if (stvch) stvch.textContent = currentStVolWindow + 'd';
+  // Sync data source selector state + description from localStorage
+  setDataSource(dataSource);
+  stSetDataSource(stDataSource);
 });
 </script>
 </body>
