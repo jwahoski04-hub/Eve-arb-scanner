@@ -975,6 +975,39 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
 // ============================================================
 // CONSTANTS
 // ============================================================
+// ============================================================
+// CONSTANTS
+// ============================================================
+// X-User-Agent identifier for every ESI request. CCP asks third-party apps
+// to identify themselves so they can contact developers if their tool is
+// causing load problems (and so abusive traffic can be distinguished from
+// legitimate). In a browser the standard User-Agent header is locked down
+// and can't be overridden, so ESI supports X-User-Agent as a browser-safe
+// alternative — it's CORS-allowed and carries the same information.
+//
+// Format follows the convention documented at
+// https://developers.eveonline.com/docs/services/esi/best-practices/
+//   AppName/Version (+source-URL)
+const ESI_UA = 'EVE-Arb-Scanner/1.0 (+https://jwahoski04-hub.github.io/eve-tools/)';
+
+// Merge the X-User-Agent header into an existing headers object (or create
+// one). Used for every ESI request — keeps identity attached automatically.
+function withUA(headers) {
+  return { ...(headers || {}), 'X-User-Agent': ESI_UA };
+}
+
+// Append the user_agent query parameter to an ESI URL. CCP documents three
+// ways to identify yourself: User-Agent header (blocked in browsers),
+// X-User-Agent header (works most places), and user_agent query parameter
+// (guaranteed to work because it's just a URL). We use both the header AND
+// the query param so identification is robust regardless of CORS quirks.
+// Non-ESI URLs (like Fuzzwork) pass through unchanged.
+function withUAUrl(url) {
+  if (!url.includes('esi.evetech.net')) return url;
+  const sep = url.includes('?') ? '&' : '?';
+  return `${url}${sep}user_agent=${encodeURIComponent(ESI_UA)}`;
+}
+
 const HUBS = {
   '10000002':{name:'Jita',    stationName:'Jita IV - Moon 4 - Caldari Navy Assembly Plant',    station:60003760, system:30000142, cls:'hub-jita'},
   '10000043':{name:'Amarr',   stationName:'Amarr VIII (Oris) - Emperor Family Academy',         station:60008494, system:30002187, cls:'hub-amarr'},
@@ -1272,17 +1305,46 @@ async function dbClear() {
 
 // ============================================================
 // RATE LIMITER
+// Three layers, each handling a different ESI rate control:
+//
+// 1. Error limit (legacy, always active) — X-ESI-Error-Limit-Remain.
+//    Budget of 100 non-2xx/3xx responses per minute across all routes.
+//    Hitting zero returns 420s on every ESI call. We throttle when
+//    remaining drops below a user-configured floor.
+//
+// 2. Bucket rate limit (new, rolling out per-route since Feb 2026) —
+//    X-Ratelimit-Limit / X-Ratelimit-Remaining / X-Ratelimit-Reset.
+//    Token-based floating window. Currently ~12,000 tokens per 5 min
+//    for market orders. Exceeding gets a 429 with Retry-After header.
+//    We track per-group remaining and pause when it gets close to 0.
+//
+// 3. Per-endpoint hard caps — e.g. Market History is capped at 300
+//    calls/minute regardless of token state. We self-throttle history
+//    fetches independently to stay well under that ceiling.
 // ============================================================
-let rateRemain     = 100;  // X-Ratelimit-Remaining
+let rateRemain     = 100;  // X-Ratelimit-Remaining (old generic)
 let errRemain      = 100;  // X-ESI-Error-Limit-Remain
 let isThrottled    = false;
-let throttleUntil  = 0;
+let throttleUntil  = 0;    // Epoch ms — nothing is sent before this time
+
+// Per-group (route family) token bucket state. ESI returns these under
+// the new rate-limit system: X-Ratelimit-Group identifies the bucket,
+// X-Ratelimit-Remaining gives the tokens we have left in it, and
+// X-Ratelimit-Reset says when the window resets (seconds).
+// We pause new requests to a group when its remaining drops near zero.
+const rateBuckets = {};  // { 'market-orders': { remaining: 11800, reset: 300, limit: 12000 }, ... }
 
 // Cache session counters
 let cacheHits  = 0;
 let cacheMisses = 0;
 let cache304s  = 0;
 let bytesSaved = 0;
+
+// History request self-throttle — Market History is capped at 300/minute.
+// We track recent history-endpoint request timestamps and sleep if we'd
+// exceed ~4/sec (240/min, leaving safe headroom).
+const historyRequestTimes = [];
+const HISTORY_MAX_PER_MIN = 240;
 
 function updateRateUI() {
   const rf = document.getElementById('rateFill');
@@ -1308,24 +1370,104 @@ function updateRateUI() {
 }
 
 function parseRateHeaders(headers) {
+  // Legacy headers — generic rate budget and error budget
   const rl = headers.get('X-Ratelimit-Remaining');
   const el = headers.get('X-ESI-Error-Limit-Remain');
   if (rl !== null) rateRemain = parseInt(rl);
   if (el !== null) errRemain  = parseInt(el);
+
+  // New token-bucket headers (per X-Ratelimit-Group). Only some routes
+  // have this right now (market-orders being one); routes without it
+  // just won't return X-Ratelimit-Group, so we no-op.
+  const group = headers.get('X-Ratelimit-Group');
+  if (group) {
+    // Limit comes as "150/15m" or similar — we just capture the number
+    const limitHeader = headers.get('X-Ratelimit-Limit');
+    const groupRemain = parseInt(headers.get('X-Ratelimit-Remaining'));
+    const groupReset  = parseInt(headers.get('X-Ratelimit-Reset'));
+    if (!isNaN(groupRemain)) {
+      rateBuckets[group] = {
+        remaining: groupRemain,
+        reset:     isNaN(groupReset) ? 60 : groupReset,
+        limit:     limitHeader || '?',
+        checkedAt: Date.now(),
+      };
+    }
+  }
+  updateRateUI();
+}
+
+// Called on a 429 response — sleep for Retry-After seconds.
+// Rate-limit headers already parsed by parseRateHeaders; this just
+// enforces the server-provided cooldown and logs it.
+async function handle429(headers) {
+  const retryAfter = parseInt(headers.get('Retry-After')) || 5;
+  const waitMs = Math.min(retryAfter * 1000, 30000); // cap at 30s for sanity
+  throttleUntil = Date.now() + waitMs;
+  isThrottled = true;
+  updateRateUI();
+  log(`RATE LIMITED (429) — sleeping ${retryAfter}s per Retry-After header`);
+  await sleep(waitMs);
+  isThrottled = false;
   updateRateUI();
 }
 
 async function checkThrottle() {
+  // Honor any active Retry-After cooldown first
+  if (throttleUntil > Date.now()) {
+    await sleep(Math.max(0, throttleUntil - Date.now()));
+  }
+
+  // Per-group bucket near exhaustion — sleep until bucket reset
+  for (const [group, state] of Object.entries(rateBuckets)) {
+    // Consider "near exhaustion" when <5% of limit remains, or absolute <20
+    if (state.remaining < 20) {
+      isThrottled = true;
+      updateRateUI();
+      const wait = Math.min((state.reset || 60) * 1000, 30000);
+      log(`RATE LIMIT GROUP "${group}" near empty (${state.remaining} left) — sleeping ${Math.round(wait/1000)}s`);
+      await sleep(wait);
+      // Assume bucket has refilled after reset
+      state.remaining = state.limit ? 1000 : 500;
+      isThrottled = false;
+      updateRateUI();
+    }
+  }
+
+  // Legacy error/rate limit throttle (unchanged logic)
   const floor = parseInt(document.getElementById('throttleFloor').value);
   if (errRemain < floor || rateRemain < 10) {
     isThrottled = true;
     updateRateUI();
-    // Back off proportionally — lower remaining = longer wait
     const delay = errRemain < 20 ? 2000 : errRemain < floor ? 500 : 200;
     await sleep(delay);
   } else {
     isThrottled = false;
   }
+}
+
+// History endpoint self-throttle. Keeps us well under ESI's 300/min cap
+// on /markets/{region}/history/ by ensuring no more than HISTORY_MAX_PER_MIN
+// requests land inside any rolling 60-second window. Call this BEFORE
+// issuing a history request.
+async function throttleHistory() {
+  const now = Date.now();
+  // Drop timestamps older than 60s
+  while (historyRequestTimes.length && now - historyRequestTimes[0] > 60000) {
+    historyRequestTimes.shift();
+  }
+  if (historyRequestTimes.length >= HISTORY_MAX_PER_MIN) {
+    // Wait until the oldest timestamp in our window ages out
+    const oldest = historyRequestTimes[0];
+    const waitMs = 60000 - (now - oldest) + 50; // +50ms cushion
+    if (waitMs > 0) await sleep(waitMs);
+    // Re-drain and fall through — the request can proceed now
+    const now2 = Date.now();
+    while (historyRequestTimes.length && now2 - historyRequestTimes[0] > 60000) {
+      historyRequestTimes.shift();
+    }
+  }
+  historyRequestTimes.push(Date.now());
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -1349,13 +1491,15 @@ async function esiFetch(url) {
     return cached.data;
   }
 
-  // 2. Build headers — include ETag for conditional request
-  const headers = {};
+  // 2. Build headers — include ETag for conditional request + identity UA
+  const headers = withUA();
   if (cached && cached.etag) headers['If-None-Match'] = cached.etag;
 
   let resp;
   try {
-    resp = await fetch(url, { headers });
+    // Cache key uses the canonical URL; network call uses URL-with-UA.
+    // This way identity tagging doesn't invalidate existing cache entries.
+    resp = await fetch(withUAUrl(url), { headers });
   } catch(e) {
     // Network error — return stale cache if available
     if (cached) { cacheHits++; return cached.data; }
@@ -1374,6 +1518,15 @@ async function esiFetch(url) {
       await dbPut({ ...cached, expires: newExpires, hits: (cached.hits || 0) + 1 });
       return cached.data;
     }
+  }
+
+  // 429 Too Many Requests — honor Retry-After and retry ONCE. This is the
+  // correct response to the new token-bucket rate limit. Single retry is
+  // enough because parseRateHeaders already updated the bucket state, so
+  // checkThrottle on the recursive call will pause if needed.
+  if (resp.status === 429) {
+    await handle429(resp.headers);
+    return esiFetch(url); // retry once with updated throttle state
   }
 
   if (!resp.ok) {
@@ -1465,11 +1618,14 @@ function setScanButtonsForMutex() {
 
 // Fetch with an AbortController-based timeout. Returns the Response or
 // throws on timeout / network failure.
+// Fetch with an AbortController-based timeout. Returns the Response or
+// throws on timeout / network failure. Also attaches the X-User-Agent
+// header so ESI knows which tool this request came from.
 async function fetchWithTimeout(url, timeoutMs = 15000) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const resp = await fetch(url, { signal: ctrl.signal });
+    const resp = await fetch(withUAUrl(url), { signal: ctrl.signal, headers: withUA() });
     return resp;
   } finally {
     clearTimeout(timer);
@@ -1489,10 +1645,18 @@ async function fetchRegionOrdersPage(regionId, page, maxAttempts = 3) {
       const resp = await fetchWithTimeout(url, 12000 + attempt * 6000);
       parseRateHeaders(resp.headers);
       if (resp.status === 404) return []; // page past the end
+      // 429 Too Many Requests — use server's Retry-After value, not our
+      // shorter default, and don't count it against the retry budget.
+      if (resp.status === 429) {
+        await handle429(resp.headers);
+        // Doesn't count — decrement attempt so we get the full retry budget
+        attempt--;
+        continue;
+      }
       if (!resp.ok) {
         errRemain = Math.max(0, errRemain - 2);
         updateRateUI();
-        // 420/429/5xx → back off and retry
+        // 420/5xx → back off and retry
         if (attempt < maxAttempts) { await sleep(500 * attempt); continue; }
         return null;
       }
@@ -1845,6 +2009,10 @@ function computeVolumeWindows(history) {
 
 async function getHistoryAllWindows(regionId, typeId) {
   try {
+    // Self-throttle — Market History endpoint is capped at 300/min by ESI.
+    // Only needed when the cache is cold; esiFetch returns early from IndexedDB
+    // on fresh hits and never actually makes a network call.
+    await throttleHistory();
     const hist = await esiFetch(`https://esi.evetech.net/latest/markets/${regionId}/history/?type_id=${typeId}`);
     if (!Array.isArray(hist) || !hist.length) return { v1:0, v7:0, v30:0 };
     return computeVolumeWindows(hist);
@@ -1875,9 +2043,9 @@ async function batchResolveNames(typeIds) {
   for (const chunk of chunks) {
     if (stopFlag) break;
     try {
-      const namesResp = await fetch('https://esi.evetech.net/latest/universe/names/', {
+      const namesResp = await fetch(withUAUrl('https://esi.evetech.net/latest/universe/names/'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: withUA({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(chunk)
       });
       parseRateHeaders(namesResp.headers);
@@ -2453,7 +2621,8 @@ async function startScan() {
       await Promise.all(batch.map(async tid => {
         try {
           const resp = await fetch(
-            `https://esi.evetech.net/latest/markets/${hubId}/orders/?order_type=sell&type_id=${tid}`
+            withUAUrl(`https://esi.evetech.net/latest/markets/${hubId}/orders/?order_type=sell&type_id=${tid}`),
+            { headers: withUA() }
           );
           if (!resp.ok) return;
           const orders = await resp.json();
@@ -2550,6 +2719,8 @@ async function startScan() {
     const opp = opportunities.find(o => o.typeId === typeId);
     if (!opp) return;
     try {
+      // Self-throttle — market history endpoint is capped at 300/min by ESI
+      await throttleHistory();
       const hist = await esiFetch(
         `https://esi.evetech.net/latest/markets/${opp.sellHubId}/history/?type_id=${typeId}`
       );
@@ -3143,7 +3314,8 @@ async function startStationScan() {
     let page = 1;
     while (!stStopFlag) {
       const resp = await fetch(
-        `https://esi.evetech.net/latest/markets/${hubId}/types/?page=${page}`
+        withUAUrl(`https://esi.evetech.net/latest/markets/${hubId}/types/?page=${page}`),
+        { headers: withUA() }
       );
       if (!resp.ok) break;
       const data = await resp.json();
@@ -3165,7 +3337,8 @@ async function startStationScan() {
     await Promise.all(batch.map(async typeId => {
       try {
         const resp = await fetch(
-          `https://esi.evetech.net/latest/markets/${hubId}/orders/?order_type=all&type_id=${typeId}`
+          withUAUrl(`https://esi.evetech.net/latest/markets/${hubId}/orders/?order_type=all&type_id=${typeId}`),
+          { headers: withUA() }
         );
         if (!resp.ok) return;
         const itemOrders = await resp.json();
@@ -3286,6 +3459,8 @@ async function startStationScan() {
   const tasks = uniqueIds.map(typeId => async () => {
     if (stStopFlag) return;
     try {
+      // Self-throttle — market history endpoint is capped at 300/min by ESI
+      await throttleHistory();
       const hist = await esiFetch(
         `https://esi.evetech.net/latest/markets/${hubId}/history/?type_id=${typeId}`
       );
