@@ -1479,6 +1479,7 @@ async function getAllTradeableTypeIds(regionIds) {
   // up to ~10 pages per region. Much lighter than the orders endpoint.
   await Promise.all(regionIds.map(async regionId => {
     let page = 1;
+    let totalPages = null; // learned from X-Pages on first response
     while (!isStopped()) {
       try {
         const resp = await fetchWithTimeout(
@@ -1486,10 +1487,23 @@ async function getAllTradeableTypeIds(regionIds) {
           20000
         );
         if (!resp.ok) break;
+        // Capture X-Pages on page 1 so we don't depend on the fragile
+        // "short page means last page" heuristic (which misfires on
+        // partial/truncated responses).
+        if (page === 1) {
+          const xp = resp.headers.get('X-Pages');
+          if (xp) totalPages = Math.min(parseInt(xp) || 1, 30);
+        }
         const ids = await resp.json();
         if (!Array.isArray(ids) || !ids.length) break;
         ids.forEach(id => allIds.add(id));
-        if (ids.length < 1000) break; // partial page = last page
+        // Prefer X-Pages if we have it; fall back to the length heuristic only
+        // when the header is missing.
+        if (totalPages !== null) {
+          if (page >= totalPages) break;
+        } else if (ids.length < 1000) {
+          break;
+        }
         page++;
         if (page > 30) break; // safety cap
       } catch(e) { break; }
@@ -2348,7 +2362,19 @@ async function fetchRegionOrders(regionId) {
   reportBulkProgress();
 
   if (isStopped()) return page1Data;
-  if (totalPages <= 1 || page1Data.length < 1000) return page1Data;
+  // Only stop early if X-Pages genuinely says there's just one page.
+  // Previous builds also stopped when page1Data.length < 1000 — but that
+  // short-circuited on TRUNCATED or PARTIAL responses, causing the dreaded
+  // "scan completed in 9 seconds with 9 results" silent failure. If ESI
+  // says there are more pages, we fetch them regardless of page 1's size.
+  if (totalPages <= 1) return page1Data;
+  // Sanity-check page 1 — Jita/Amarr/Dodixie/Hek/Rens ALWAYS have more than
+  // 1000 orders on page 1 under normal conditions (50k+ total orders usually).
+  // A short page 1 when X-Pages says there are more pages is suspicious but
+  // legal; log it so the pattern is visible if it recurs.
+  if (page1Data.length < 1000 && totalPages > 1) {
+    log(`⚠ ${hubName}: page 1 returned only ${page1Data.length} orders but X-Pages=${totalPages} — continuing to fetch remaining pages`);
+  }
 
   // Step 2 — fetch remaining pages in parallel batches. Concurrency of 6
   // keeps us inside the browser's HTTP/2 stream comfort zone for a single
@@ -4655,16 +4681,27 @@ async function startStationScan() {
   let allTypeIds = [];
   try {
     let page = 1;
+    let totalPages = null;
     while (!stStopFlag) {
       const resp = await fetch(
         withUAUrl(`https://esi.evetech.net/latest/markets/${hubId}/types/?page=${page}`),
         { headers: withUA() }
       );
       if (!resp.ok) break;
+      if (page === 1) {
+        const xp = resp.headers.get('X-Pages');
+        if (xp) totalPages = Math.min(parseInt(xp) || 1, 30);
+      }
       const data = await resp.json();
       if (!Array.isArray(data) || !data.length) break;
       allTypeIds = allTypeIds.concat(data);
-      if (data.length < 1000) break;
+      // Prefer X-Pages when present; fall back to length heuristic only
+      // when the header is missing.
+      if (totalPages !== null) {
+        if (page >= totalPages) break;
+      } else if (data.length < 1000) {
+        break;
+      }
       page++;
     }
   } catch(e) {}
