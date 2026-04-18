@@ -1280,6 +1280,7 @@ const CAT_ID_MAP = {
 
 // ESI category_id → short display label for the Category column
 const CAT_LABEL_MAP = {
+  2:    'Celestial',   // rare market items categorized as celestials
   4:    'Material',
   5:    'Accessory',   // dog tags, identification tags
   6:    'Ship',
@@ -1293,23 +1294,47 @@ const CAT_LABEL_MAP = {
   20:   'Implant',     // legacy alias → boosters + old implant classification
   22:   'Deployable',
   23:   'Structure',
+  24:   'Reaction',    // old reactions category (pre-Onslaught)
   25:   'Asteroid',    // all raw and compressed ores
   30:   'Apparel',
   32:   'Subsystem',
   34:   'Str. Module',
   35:   'Decryptor',   // invention decryptors
+  39:   'Infrastructure',
   40:   'Sov. Struct', // sovereignty structures (TCU, SBU etc.)
   41:   'PI Resource',
   42:   'Orbital',
   43:   'PI Industry',
+  46:   'Placeable',   // Placeable items (ice storm generator, etc.)
+  49:   'Planet',
+  63:   'Relic',       // Ancient relics, archaeology loot
   65:   'Reaction',
+  66:   'Structure Mod.',
   87:   'Fighter',     // carrier-launched fighters (Locust I etc.)
   91:   'SKIN',        // ship SKINs
   157:  'Rig',
+  350001: 'Infantry',  // Infantry-scale items (legacy DUST 514 remnants)
   2100: 'Expert Sys.', // temporary skill bundles
+  2118: 'Special Ed.', // collectibles, special edition items, gift packs
 };
 function catLabel(categoryId) {
   return CAT_LABEL_MAP[categoryId] || (categoryId != null ? `Cat ${categoryId}` : '—');
+}
+
+// Generate the correct icon URL for a typeId based on its category. EVE's
+// image service uses different endpoint variants for some categories:
+//   - Blueprints (cat 9) → /bp  (blueprint parchment icon)
+//   - SKINs (cat 91)     → /icon with a different backing image; fall back
+//     to a generic SKIN sticker via the relations endpoint if the direct
+//     icon doesn't exist (we use the error fallback to hide gracefully)
+// Everything else uses the standard /icon endpoint.
+function iconUrl(typeId, categoryId, size = 32) {
+  if (categoryId === 9) {
+    // Blueprint originals. BPCs also work with this URL because they share
+    // typeIds with their originals at the ESI level.
+    return `https://images.evetech.net/types/${typeId}/bp?size=${size}`;
+  }
+  return `https://images.evetech.net/types/${typeId}/icon?size=${size}`;
 }
 
 // Shared category filter
@@ -3255,7 +3280,7 @@ function renderTable() {
     const sellDaysStr = r.sellDays == null ? '—' : r.sellDays.toFixed(1) + 'd';
     return `<tr class="${rowCls}" data-key="${key}" onclick="toggleExpand('${key}',${r.typeId})">
       <td><span class="watchstar" onclick="event.stopPropagation();toggleWatch(${JSON.stringify(r).replace(/"/g,'&quot;')})">${isWatched?'★':'☆'}</span></td>
-      <td><div class="item-cell"><img class="item-icon" src="https://images.evetech.net/types/${r.typeId}/icon?size=32" width="24" height="24" alt="" loading="lazy" onerror="this.style.visibility='hidden'"><span class="item-name copyable" title="${name} — click to copy" data-copy-text="${name.replace(/"/g,'&quot;')}" onclick="event.stopPropagation();copyItemName(this)">${name}</span></div></td>
+      <td><div class="item-cell"><img class="item-icon" src="${iconUrl(r.typeId, r.categoryId)}" width="24" height="24" alt="" loading="lazy" onerror="this.style.visibility='hidden'"><span class="item-name copyable" title="${name} — click to copy" data-copy-text="${name.replace(/"/g,'&quot;')}" onclick="event.stopPropagation();copyItemName(this)">${name}</span></div></td>
       <td style="color:var(--text-muted);font-size:10px">${catLabel(r.categoryId)}</td>
       <td><span class="hub-pill ${bCls}">${r.buyHubName}</span><span class="arrow">→</span><span class="hub-pill ${sCls}">${r.sellHubName}</span></td>
       <td>${fmtISK(r.buyPrice)}</td>
@@ -3536,7 +3561,7 @@ function renderWatchlistRow(w) {
     const mCls = snap.margin > 0.15 ? 'pct-high' : snap.margin > 0.08 ? 'pct-mid' : 'pct-low';
     return `<tr>
       <td><span class="watchstar" style="color:var(--amber)" onclick="removeWatchById('${idEsc}')" title="Remove from watchlist">★</span></td>
-      <td style="text-align:left;padding-left:12px;"><div class="item-cell"><img class="item-icon" src="https://images.evetech.net/types/${w.typeId}/icon?size=32" width="24" height="24" alt="" loading="lazy" onerror="this.style.visibility='hidden'"><span class="item-name copyable" title="${w.name||'?'} — click to copy" data-copy-text="${(w.name||'').replace(/"/g,'&quot;')}">${w.name||`#${w.typeId}`}</span></div></td>
+      <td style="text-align:left;padding-left:12px;"><div class="item-cell"><img class="item-icon" src="${iconUrl(w.typeId, w.categoryId)}" width="24" height="24" alt="" loading="lazy" onerror="this.style.visibility='hidden'"><span class="item-name copyable" title="${w.name||'?'} — click to copy" data-copy-text="${(w.name||'').replace(/"/g,'&quot;')}">${w.name||`#${w.typeId}`}</span></div></td>
       <td style="color:var(--cyan);font-size:10px;">HUB</td>
       <td><span class="hub-pill ${bCls}">${w.buyHubName}</span><span class="arrow">→</span><span class="hub-pill ${sCls}">${w.sellHubName}</span></td>
       <td>${fmtISK(snap.buyPrice)}${arrowHTML(deltas.buyPrice, 'down')}</td>
@@ -3554,7 +3579,7 @@ function renderWatchlistRow(w) {
     const rCls = snap.roi > 0.15 ? 'pct-high' : snap.roi > 0.08 ? 'pct-mid' : 'pct-low';
     return `<tr>
       <td><span class="watchstar" style="color:var(--amber)" onclick="removeWatchById('${idEsc}')" title="Remove from watchlist">★</span></td>
-      <td style="text-align:left;padding-left:12px;"><div class="item-cell"><img class="item-icon" src="https://images.evetech.net/types/${w.typeId}/icon?size=32" width="24" height="24" alt="" loading="lazy" onerror="this.style.visibility='hidden'"><span class="item-name copyable" title="${w.name||'?'} — click to copy" data-copy-text="${(w.name||'').replace(/"/g,'&quot;')}">${w.name||`#${w.typeId}`}</span></div></td>
+      <td style="text-align:left;padding-left:12px;"><div class="item-cell"><img class="item-icon" src="${iconUrl(w.typeId, w.categoryId)}" width="24" height="24" alt="" loading="lazy" onerror="this.style.visibility='hidden'"><span class="item-name copyable" title="${w.name||'?'} — click to copy" data-copy-text="${(w.name||'').replace(/"/g,'&quot;')}">${w.name||`#${w.typeId}`}</span></div></td>
       <td style="color:var(--purple);font-size:10px;">STATION</td>
       <td><span class="hub-pill ${sCls}">${w.stationHubName}</span></td>
       <td>${fmtISK(snap.buyNow)}${arrowHTML(deltas.buyNow, 'up')}</td>
@@ -4502,7 +4527,7 @@ function renderStTable() {
       : '';
     return `<tr class="${rowClass}">
       <td><span class="watchstar" onclick="stToggleWatch(${JSON.stringify(r).replace(/"/g,'&quot;')})">${isWatched?'★':'☆'}</span></td>
-      <td><div class="item-cell"><img class="item-icon" src="https://images.evetech.net/types/${r.typeId}/icon?size=32" width="24" height="24" alt="" loading="lazy" onerror="this.style.visibility='hidden'"><span class="item-name copyable" title="${r.name} — click to copy" data-copy-text="${r.name.replace(/"/g,'&quot;')}">${crossedGlyph}${r.name}</span></div></td>
+      <td><div class="item-cell"><img class="item-icon" src="${iconUrl(r.typeId, r.categoryId)}" width="24" height="24" alt="" loading="lazy" onerror="this.style.visibility='hidden'"><span class="item-name copyable" title="${r.name} — click to copy" data-copy-text="${r.name.replace(/"/g,'&quot;')}">${crossedGlyph}${r.name}</span></div></td>
       <td style="color:var(--text-muted);font-size:10px">${catLabel(r.categoryId)}</td>
       <td>${fmtISK(r.buyNow)}</td>
       <td>${fmtISK(r.sellNow)}</td>
