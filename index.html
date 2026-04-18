@@ -1221,6 +1221,43 @@ function isStopped() {
 }
 
 // ============================================================
+// SCAN MUTEX
+// Only one scan at a time. Running both in parallel would halve ESI
+// headroom for each, double throttle hits, and confuse the timer UI
+// (which tracks one active tab at a time). When a scan is running,
+// the OTHER tab's SCAN button gets greyed out with a "wait" message.
+// ============================================================
+function setScanButtonsForMutex() {
+  const hubRunning = scanActive;
+  const stRunning  = stScanActive;
+  const otherRunning = hubRunning || stRunning;
+
+  const hubBtn = document.getElementById('scanBtn');
+  const stBtn  = document.getElementById('stScanBtn');
+  if (!hubBtn || !stBtn) return;
+
+  if (stRunning && !hubRunning) {
+    // Station is running — disable hub's scan button
+    hubBtn.disabled = true;
+    hubBtn.textContent = '⬡ STATION SCAN RUNNING';
+    hubBtn.title = 'Wait for the Station Trading scan to finish before starting a Hub Trading scan.';
+  } else if (!hubRunning) {
+    hubBtn.disabled = false;
+    hubBtn.textContent = '▶ SCAN ALL';
+    hubBtn.title = '';
+  }
+  if (hubRunning && !stRunning) {
+    stBtn.disabled = true;
+    stBtn.textContent = '⬡ HUB SCAN RUNNING';
+    stBtn.title = 'Wait for the Hub Trading scan to finish before starting a Station Trading scan.';
+  } else if (!stRunning) {
+    stBtn.disabled = false;
+    stBtn.textContent = '▶ SCAN';
+    stBtn.title = '';
+  }
+}
+
+// ============================================================
 // BULK REGION ORDER FETCH
 // Fetch page 1 to learn X-Pages, then fetch the remaining pages in
 // parallel batches with per-request timeouts + retries so a single
@@ -1412,7 +1449,7 @@ async function fetchRegionOrders(regionId) {
   const remainingPages = [];
   for (let p = 2; p <= totalPages; p++) remainingPages.push(p);
 
-  const CONCURRENCY = 8;
+  const CONCURRENCY = 12;
   let nextIdx = 0;
   let failed  = 0;
 
@@ -1504,46 +1541,56 @@ async function batchResolveNames(typeIds) {
       }
     } catch(e) { /* fall through */ }
 
-    // Fetch packaged volumes AND category_id in parallel batches of 20.
-    // ESI /universe/types/{id}/ returns group_id but NOT category_id.
-    // We get category_id by fetching /universe/groups/{group_id}/ — groups are
-    // highly cacheable (there are only ~1800 groups vs 40k+ types).
+    // Fetch packaged volumes AND category_id. ESI /universe/types/{id}/ gives
+    // us group_id but not category_id, so we also need /universe/groups/{gid}/
+    // to complete the picture. Both endpoints cache aggressively (types barely
+    // ever change), so revalidation is fast once warmed up.
+    //
+    // The previous implementation ran batches of 20 in SEQUENCE — meaning
+    // resolving 1000 types took ~50 sequential rounds. Now we dispatch all
+    // types as a single concurrent worker pool, which is dramatically faster
+    // while still capping in-flight requests so we don't overrun ESI's limits.
     const volChunk = chunk.filter(id => !SDE_VOL_CACHE[id] || !TYPE_CAT_CACHE[id]);
-    const volBatch = [];
-    for (let i = 0; i < volChunk.length; i += 20) {
-      volBatch.push(volChunk.slice(i, i+20));
-    }
-    for (const batch of volBatch) {
-      if (stopFlag) break;
-      await Promise.all(batch.map(async id => {
-        try {
-          const info = await esiFetch(`https://esi.evetech.net/latest/universe/types/${id}/`);
-          if (!info) return;
-          if (info.packaged_volume) {
-            SDE_VOL_CACHE[id] = info.packaged_volume;
-            volMap[id] = info.packaged_volume;
+
+    async function resolveOne(id) {
+      try {
+        const info = await esiFetch(`https://esi.evetech.net/latest/universe/types/${id}/`);
+        if (!info) return;
+        if (info.packaged_volume) {
+          SDE_VOL_CACHE[id] = info.packaged_volume;
+          volMap[id] = info.packaged_volume;
+        }
+        const groupId = info.group_id;
+        if (groupId != null) {
+          if (GROUP_CAT_CACHE[groupId] != null) {
+            TYPE_CAT_CACHE[id] = GROUP_CAT_CACHE[groupId];
+            catMap[id] = GROUP_CAT_CACHE[groupId];
+          } else {
+            try {
+              const grpInfo = await esiFetch(`https://esi.evetech.net/latest/universe/groups/${groupId}/`);
+              if (grpInfo && grpInfo.category_id != null) {
+                GROUP_CAT_CACHE[groupId] = grpInfo.category_id;
+                TYPE_CAT_CACHE[id] = grpInfo.category_id;
+                catMap[id] = grpInfo.category_id;
+              }
+            } catch(e) {}
           }
-          // Derive category_id from group_id — check cache first
-          const groupId = info.group_id;
-          if (groupId != null) {
-            if (GROUP_CAT_CACHE[groupId] != null) {
-              TYPE_CAT_CACHE[id] = GROUP_CAT_CACHE[groupId];
-              catMap[id] = GROUP_CAT_CACHE[groupId];
-            } else {
-              // Fetch group info to get category_id
-              try {
-                const grpInfo = await esiFetch(`https://esi.evetech.net/latest/universe/groups/${groupId}/`);
-                if (grpInfo && grpInfo.category_id != null) {
-                  GROUP_CAT_CACHE[groupId] = grpInfo.category_id;
-                  TYPE_CAT_CACHE[id] = grpInfo.category_id;
-                  catMap[id] = grpInfo.category_id;
-                }
-              } catch(e) {}
-            }
-          }
-        } catch(e) {}
-      }));
+        }
+      } catch(e) {}
     }
+
+    // 30 concurrent workers — cached responses flow fast, fresh 200s still
+    // safely under ESI's 100/20s rate limit.
+    const VOL_CONCURRENCY = 30;
+    let vIdx = 0;
+    async function volWorker() {
+      while (vIdx < volChunk.length && !isStopped()) {
+        const id = volChunk[vIdx++];
+        await resolveOne(id);
+      }
+    }
+    await Promise.all(Array.from({ length: VOL_CONCURRENCY }, volWorker));
+
     log(`NAMES RESOLVED: ${Object.keys(nameMap).length} · VOLUMES: ${Object.keys(SDE_VOL_CACHE).length} · CATS: ${Object.keys(TYPE_CAT_CACHE).length}`);
   }
   return { nameMap, volMap, catMap };
@@ -1888,7 +1935,13 @@ function parseMoneyInput(id) {
 // ============================================================
 // SCAN ORCHESTRATION
 // ============================================================
-function toggleScan() { if (!scanActive) startScan(); }
+function toggleScan() {
+  if (stScanActive) {
+    log('CANNOT SCAN — Station Trading scan is currently running. Wait for it to finish.');
+    return;
+  }
+  if (!scanActive) startScan();
+}
 function stopScan() {
   stopFlag = true;
   log('SCAN ABORTED');
@@ -1898,6 +1951,7 @@ function stopScan() {
   document.getElementById('workingBadge').classList.remove('active');
   stopTimer();
   scanActive = false;
+  setScanButtonsForMutex();
 }
 
 async function startScan() {
@@ -1920,6 +1974,7 @@ async function startScan() {
   document.getElementById('scanBtn').disabled = true;
   document.getElementById('stopBtn').style.display = '';
   document.getElementById('workingBadge').classList.add('active');
+  setScanButtonsForMutex();
 
   const tax         = parseFloat(document.getElementById('taxRate').value) / 100;
   const minMargin   = parseFloat(document.getElementById('minMargin').value) / 100;
@@ -2106,12 +2161,13 @@ async function startScan() {
     }
   });
 
-  // 20 concurrent workers — history is cached so these are fast
+  // 30 concurrent workers — history responses cache aggressively (~23h) so
+  // second and subsequent scans flow through this phase very fast.
   let histIdx = 0;
   async function histWorker() {
-    while (histIdx < histTasks.length && !stopFlag) { await histTasks[histIdx++](); }
+    while (histIdx < histTasks.length && !isStopped()) { await histTasks[histIdx++](); }
   }
-  await Promise.all(Array.from({length: 20}, histWorker));
+  await Promise.all(Array.from({length: 30}, histWorker));
 
   // Apply history + outlier filter
   // Filtering uses the CURRENTLY SELECTED volume window (currentVolWindow).
@@ -2195,6 +2251,7 @@ function finishScan() {
   document.getElementById('stopBtn').style.display = 'none';
   document.getElementById('workingBadge').classList.remove('active');
   stopTimer();
+  setScanButtonsForMutex();
 }
 
 // ============================================================
@@ -2554,7 +2611,13 @@ function stSetProgress(pct, text, sub) {
   if (timerTab === 'station' && timerStart) updateTimerPct(pct);
 }
 
-function toggleStationScan() { if (!stScanActive) startStationScan(); }
+function toggleStationScan() {
+  if (scanActive) {
+    stLog('CANNOT SCAN — Hub Trading scan is currently running. Wait for it to finish.');
+    return;
+  }
+  if (!stScanActive) startStationScan();
+}
 
 // Switch station trading vol window (1d/7d/30d) — recomputes vol, sellDays, score
 // across station results without needing to rescan.
@@ -2584,6 +2647,7 @@ function stopStationScan() {
   document.getElementById('stWorkingBadge').classList.remove('active');
   stopTimer();
   stScanActive = false;
+  setScanButtonsForMutex();
 }
 
 async function startStationScan() {
@@ -2612,6 +2676,7 @@ async function startStationScan() {
   document.getElementById('st-progress-area').style.display = '';
   document.getElementById('stWorkingBadge').classList.add('active');
   document.getElementById('tab-st-count').textContent = '';
+  setScanButtonsForMutex();
 
   // ── Step 1: Bulk fetch all region orders ──────────────────────────────
   stLog(`FETCHING ALL ORDERS FOR ${hub.name.toUpperCase()}...`);
@@ -2810,8 +2875,8 @@ async function startStationScan() {
         `History: ${fetched}/${uniqueIds.length}`, `${((fetched/uniqueIds.length)*100).toFixed(0)}%`);
   });
   let ti = 0;
-  async function stHistWorker() { while (ti<tasks.length && !stStopFlag) await tasks[ti++](); }
-  await Promise.all(Array.from({length:20}, stHistWorker));
+  async function stHistWorker() { while (ti<tasks.length && !isStopped()) await tasks[ti++](); }
+  await Promise.all(Array.from({length:30}, stHistWorker));
 
   if (stStopFlag) { stFinish(); return; }
 
@@ -2857,6 +2922,7 @@ function stFinish() {
   document.getElementById('stStopBtn').style.display = 'none';
   document.getElementById('stWorkingBadge').classList.remove('active');
   stopTimer();
+  setScanButtonsForMutex();
 }
 
 function sortStTable(key) {
