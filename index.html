@@ -634,7 +634,7 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
           <button class="ds-btn ds-top" data-ds="top" onclick="setDataSource('top')" title="Limits the scan to the top 2,000 most-traded items. Uses ESI per-type queries — faster than full dump, same station-level precision.">
             TOP 2000 <span class="ds-speed-hint med">MED</span>
           </button>
-          <button class="ds-btn ds-fuzz" data-ds="fuzz" onclick="setDataSource('fuzz')" title="Uses Fuzzwork's pre-aggregated market data (updated every 30 min). Fastest, but region-level precision only — may pick up non-hub orders.">
+          <button class="ds-btn ds-fuzz" data-ds="fuzz" onclick="setDataSource('fuzz')" title="Uses Fuzzwork's pre-aggregated market data (updated every 30 min), pinned to each hub station. Fastest mode. Data can be up to ~30 min stale but is station-precise.">
             FUZZWORK <span class="ds-speed-hint fast">FAST</span>
           </button>
         </div>
@@ -820,7 +820,7 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
           <button class="ds-btn ds-top" data-st-ds="top" onclick="stSetDataSource('top')" title="Limits to top 2,000 items — faster than full dump, same station-level precision.">
             TOP 2000 <span class="ds-speed-hint med">MED</span>
           </button>
-          <button class="ds-btn ds-fuzz" data-st-ds="fuzz" onclick="stSetDataSource('fuzz')" title="Uses Fuzzwork's pre-aggregated data — fastest, but region-level precision only.">
+          <button class="ds-btn ds-fuzz" data-st-ds="fuzz" onclick="stSetDataSource('fuzz')" title="Uses Fuzzwork's pre-aggregated data, pinned to this station. Fastest. Data may be up to ~30 min stale but station-precise.">
             FUZZWORK <span class="ds-speed-hint fast">FAST</span>
           </button>
         </div>
@@ -1727,16 +1727,19 @@ async function fetchRegionOrdersTop2000(regionId, typeIds) {
 
 // ============================================================
 // FUZZWORK MODE — aggregated market data
-// Fuzzwork returns pre-computed aggregates per typeId per region, refreshed
-// every 30 minutes. Single HTTP call per hub (with types URL-encoded in
-// batches of ~200 to keep URLs under length limits). Aggregates include
-// min/max/median/volume/orderCount — we synthesize "virtual orders" from
-// these so downstream comparison code treats them identically to ESI orders.
+// Fuzzwork returns pre-computed aggregates per typeId, refreshed every
+// 30 minutes. Single HTTP call per batch of typeIds (we chunk at ~200
+// typeIds per URL to keep under length limits).
 //
-// TRADEOFF: aggregates are region-level, not station-level. We tag the
-// synthesized orders with the hub's station/system id so downstream code
-// accepts them, but the underlying data may include citadels and non-hub
-// NPC stations. Usually matches ESI at the hubs closely, occasionally drifts.
+// We use the ?station={stationId} variant, NOT ?region={regionId}, so
+// aggregates are pinned to just the hub's NPC station (e.g. Jita IV-4,
+// Amarr VIII-Oris). This matches the station-level precision used by
+// RAW ESI and TOP 2000 modes — no more picking up prices from citadels
+// or out-of-the-way stations elsewhere in the region.
+//
+// The returned sell.min / buy.max are the lowest ask / highest bid at
+// THAT STATION specifically. We synthesize "virtual orders" at those
+// prices so downstream code treats them identically to ESI orders.
 // ============================================================
 async function fetchRegionOrdersFuzzwork(regionId, typeIds) {
   const hubName = HUBS[regionId]?.name || regionId;
@@ -1762,7 +1765,10 @@ async function fetchRegionOrdersFuzzwork(regionId, typeIds) {
     while (idx < batches.length && !isStopped()) {
       const myIdx = idx++;
       const batch = batches[myIdx];
-      const url = `https://market.fuzzwork.co.uk/aggregates/?region=${regionId}&types=${batch.join(',')}`;
+      // KEY: use ?station= not ?region= so aggregates are pinned to the
+      // actual NPC hub station, not scattered across citadels and remote
+      // NPC stations elsewhere in the region.
+      const url = `https://market.fuzzwork.co.uk/aggregates/?station=${hub.station}&types=${batch.join(',')}`;
       try {
         const resp = await fetchWithTimeout(url, 20000);
         if (resp.ok) {
@@ -1771,7 +1777,7 @@ async function fetchRegionOrdersFuzzwork(regionId, typeIds) {
           for (const [tidStr, stats] of Object.entries(data)) {
             const tid = parseInt(tidStr);
             if (!stats) continue;
-            // Synthesize a sell order at the aggregate min (= best ask)
+            // Synthesize a sell order at the aggregate min (= best ask at the station)
             const sellMin = stats.sell && parseFloat(stats.sell.min);
             const sellVol = stats.sell && parseFloat(stats.sell.volume);
             const sellCnt = stats.sell && parseInt(stats.sell.orderCount);
@@ -1779,19 +1785,16 @@ async function fetchRegionOrdersFuzzwork(regionId, typeIds) {
               allOrders.push({
                 order_id: fakeIdBase + (fakeCounter++),
                 type_id: tid,
-                location_id: hub.station,  // Tag as hub station for downstream filter
+                location_id: hub.station,
                 system_id:   hub.system,
                 is_buy_order: false,
                 price: sellMin,
                 volume_remain: sellVol,
-                // Synthetic flag — we use this to treat Fuzzwork sell volume
-                // as one aggregated order when computing depth; sellOrderCount
-                // comes from Fuzzwork's orderCount directly.
                 _fuzzworkOrders: sellCnt,
                 _fuzzwork: true,
               });
             }
-            // Synthesize a buy order at the aggregate max (= best bid)
+            // Synthesize a buy order at the aggregate max (= best bid at the station)
             const buyMax = stats.buy && parseFloat(stats.buy.max);
             const buyVol = stats.buy && parseFloat(stats.buy.volume);
             const buyCnt = stats.buy && parseInt(stats.buy.orderCount);
@@ -1998,12 +2001,12 @@ function setVolWindow(win) {
 const DS_DESCRIPTIONS = {
   'esi':  '<b>Raw ESI:</b> Full bulk market dump — slowest, most precise. Every order at every hub.',
   'top':  '<b>Top 2000:</b> Per-item ESI query for ~320 core items + any learned from past Raw ESI scans. Moderate speed, same station-level precision.',
-  'fuzz': '<b>Fuzzwork:</b> Pre-aggregated data (refreshed ~30 min). Fastest. <span style="color:var(--amber)">Region-level precision only</span> — may include citadel/non-hub orders.'
+  'fuzz': '<b>Fuzzwork:</b> Pre-aggregated data pinned to each hub station. Fastest. <span style="color:var(--amber)">Data may be up to ~30 min stale.</span>'
 };
 const ST_DS_DESCRIPTIONS = {
   'esi':  '<b>Raw ESI:</b> Full region dump filtered to this station — slowest, most precise.',
   'top':  '<b>Top 2000:</b> Per-item ESI query for core + learned items. Moderate speed, station-level precision.',
-  'fuzz': '<b>Fuzzwork:</b> Pre-aggregated data (refreshed ~30 min). Fastest. <span style="color:var(--amber)">Region-level precision only</span>.'
+  'fuzz': '<b>Fuzzwork:</b> Pre-aggregated data pinned to this station. Fastest. <span style="color:var(--amber)">Data may be up to ~30 min stale.</span>'
 };
 
 function setDataSource(mode) {
