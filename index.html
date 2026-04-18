@@ -1374,8 +1374,14 @@ const GROUP_CAT_CACHE = {};
 // ============================================================
 // INDEXEDDB CACHE LAYER
 // ============================================================
+// DB_VER bump notes:
+//   v2 — initial release
+//   v3 — bumped to match browsers that had a prior v3 DB from earlier
+//        iteration of the tool. Keeps same 'responses' store schema; the
+//        upgrade callback handles store creation idempotently so bumping
+//        the version on fresh installs is a harmless no-op.
 const DB_NAME = 'eve-arb-cache-v2';
-const DB_VER  = 2;
+const DB_VER  = 3;
 const STORE   = 'responses';
 let db = null;
 
@@ -2003,6 +2009,8 @@ async function fetchRegionOrders(regionId) {
   // Step 1 — fetch page 1 to get X-Pages and the first batch of orders.
   let totalPages = 1;
   let page1Data  = [];
+  let page1Failed = false;
+  let page1FailReason = '';
 
   for (let attempt = 1; attempt <= 3; attempt++) {
     if (isStopped()) return [];
@@ -2012,8 +2020,10 @@ async function fetchRegionOrders(regionId) {
       const resp = await fetchWithTimeout(url, 25000 + attempt * 10000);
       parseRateHeaders(resp.headers);
       if (!resp.ok) {
+        page1FailReason = `HTTP ${resp.status}`;
         if (attempt < 3) { await sleep(500 * attempt); continue; }
-        return [];
+        page1Failed = true;
+        break;
       }
       const xp = resp.headers.get('X-Pages');
       if (xp) totalPages = Math.min(parseInt(xp) || 1, 200); // safety cap
@@ -2021,9 +2031,20 @@ async function fetchRegionOrders(regionId) {
       if (!Array.isArray(page1Data)) page1Data = [];
       break;
     } catch (e) {
+      page1FailReason = e.message || 'network error';
       if (attempt < 3 && !isStopped()) { await sleep(500 * attempt); continue; }
-      return [];
+      page1Failed = true;
+      break;
     }
+  }
+
+  // If page 1 failed completely, log it LOUDLY — silent failure here causes
+  // the dreaded "scan complete but 0 items" bug.
+  if (page1Failed) {
+    log(`⚠ ${hubName}: PAGE 1 FAILED (${page1FailReason}) — this hub will contribute no data. Try re-running.`);
+    bulkProgress[regionId].fetched = bulkProgress[regionId].total || 1;
+    reportBulkProgress();
+    return [];
   }
 
   bulkProgress[regionId].fetched = 1;
@@ -2905,6 +2926,12 @@ async function startScan() {
     });
     regionOrderMaps[hubId] = typeMap;
     log(`${hub.name}: ${orders.length.toLocaleString()} orders · ${typeMap.size.toLocaleString()} items at station`);
+    // Sanity check — warn if an individual hub returned almost nothing.
+    // Major hubs normally have 10,000+ orders; under 500 means the bulk
+    // fetch failed and the user is about to get near-zero results silently.
+    if (orders.length < 500 && dataSource === 'esi') {
+      log(`⚠ ${hub.name}: SUSPICIOUSLY LOW ORDER COUNT (${orders.length}) — bulk fetch likely failed. Results will be incomplete.`);
+    }
   }
 
   if (stopFlag) { finishScan(); return; }
@@ -4237,6 +4264,14 @@ async function startStationScan() {
     v.buys.sort((a,b)  => Number(b.price) - Number(a.price));
   });
   stLog(`${hub.name}: ${orders.length.toLocaleString()} orders · ${typeMap.size.toLocaleString()} items at station`);
+
+  // Sanity check — if the bulk fetch returned almost nothing, warn loudly
+  // rather than proceeding silently to "complete" with near-zero results.
+  // Jita normally has 40,000+ orders, Amarr 25,000+, smaller hubs 10,000+.
+  // Under 500 is a near-certain sign of a failed fetch.
+  if (orders.length < 500 && stDataSource === 'esi') {
+    stLog(`⚠ SUSPICIOUSLY LOW ORDER COUNT (${orders.length}) — bulk fetch likely failed. Wait 30s and rescan.`);
+  }
 
   // ── Step 2b: Gap-fill — fetch all active typeIds for this region ──────
   // The bulk feed can miss items (ESI cache lag). We get the full list of
