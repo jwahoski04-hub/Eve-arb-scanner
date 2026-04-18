@@ -2845,8 +2845,20 @@ async function startScan() {
         // Require a minimum number of sell orders at both stations.
         // This filters out thin NPC-only markets where a single overpriced order
         // is the only one present (e.g. citadel orders are invisible to ESI).
-        if (bEntry.sells.length < minSellOrds) continue;
-        if (sEntry.sells.length < minSellOrds) continue;
+        //
+        // Important: Fuzzwork aggregates all orders at a station into ONE
+        // synthetic order per type per side. We stash the real pre-aggregation
+        // order count on the synthetic as _fuzzworkOrders. When that's set,
+        // use it instead of sells.length (which is always 1 for Fuzzwork data
+        // and would otherwise filter out every Fuzzwork-sourced opportunity).
+        const bOrderCount = bEntry.sells[0]._fuzzwork
+          ? (bEntry.sells[0]._fuzzworkOrders || 1)
+          : bEntry.sells.length;
+        const sOrderCount = sEntry.sells[0]._fuzzwork
+          ? (sEntry.sells[0]._fuzzworkOrders || 1)
+          : sEntry.sells.length;
+        if (bOrderCount < minSellOrds) continue;
+        if (sOrderCount < minSellOrds) continue;
         // sells[] sorted ascending → [0] = lowest sell price at each station
         const buyPrice  = Number(bEntry.sells[0].price);  // lowest sell at origin  (what you pay)
         const sellPrice = Number(sEntry.sells[0].price);  // lowest sell at destination (price you undercut)
@@ -2859,8 +2871,8 @@ async function startScan() {
           buyPrice, sellPrice, profit: net, margin,
           // Market Supply tool-style fields (origin hub — the one you buy at)
           sellVolume: bEntry.depth,                // total units for sale at origin station (was "depth")
-          sellOrderCountOrigin: bEntry.sells.length, // competing sell orders at origin
-          sellOrderCount: sEntry.sells.length,       // competing sell orders at destination (legacy name)
+          sellOrderCountOrigin: bOrderCount,       // real count (pre-aggregation for Fuzzwork)
+          sellOrderCount: sOrderCount,             // real count at destination (legacy name)
           dailyVol1: 0, dailyVol7: 0, dailyVol30: 0, // filled in after history fetch
           sellDays: null,                            // computed = sellVolume / currentDailyVol
           // Back-compat aliases
@@ -3563,7 +3575,13 @@ async function startStationScan() {
   typeMap.forEach((v, typeId) => {
     if (!v.sells.length) { noSell++; return; }
     if (!v.buys.length)  { noBuy++;  return; }
-    if (v.buys.length < minBuyOrds) { noBuyOrds++; return; }
+    // Fuzzwork aggregates all orders into ONE synthetic order per side,
+    // stashing the real pre-aggregation order count on the synthetic as
+    // _fuzzworkOrders. Without this adaptation, Min Buy Orders=3 (default)
+    // would filter out every Fuzzwork-sourced candidate.
+    const buyOrderCount  = v.buys[0]._fuzzwork  ? (v.buys[0]._fuzzworkOrders  || 1) : v.buys.length;
+    const sellOrderCount = v.sells[0]._fuzzwork ? (v.sells[0]._fuzzworkOrders || 1) : v.sells.length;
+    if (buyOrderCount < minBuyOrds) { noBuyOrds++; return; }
     const lowestAsk   = Number(v.sells[0].price);
     const highestBid  = Number(v.buys[0].price);
 
@@ -3574,7 +3592,7 @@ async function startStationScan() {
     // Shared candidate shell — fields filled per opportunity type below
     const base = {
       typeId, name: null,
-      sellOrders: v.sells.length, buyOrders: v.buys.length,
+      sellOrders: sellOrderCount, buyOrders: buyOrderCount,
       sellVolume, buyVolume,
       dailyVol1: 0, dailyVol7: 0, dailyVol30: 0,
       sellDays: null,
