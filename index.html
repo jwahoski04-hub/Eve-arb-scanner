@@ -1899,21 +1899,21 @@ async function checkThrottle() {
     await sleep(Math.max(0, throttleUntil - Date.now()));
   }
 
-  // Per-group bucket near exhaustion — sleep until bucket reset
+  // Per-group bucket near exhaustion — sleep until bucket reset.
+  // Threshold of 5 (not 20) because ESI's market-order bucket runs
+  // tight under load: it oscillates around 10-30 remaining during
+  // heavy fetch phases, and a threshold of 20 would sleep every
+  // few requests, creating the dreaded "sleep 30s → fire few → sleep
+  // 30s" loop. At 5 we only sleep when genuinely near a 429.
   for (const [group, state] of Object.entries(rateBuckets)) {
-    // Consider "near exhaustion" when <5% of limit remains, or absolute <20
-    if (state.remaining < 20) {
+    if (state.remaining < 5) {
       isThrottled = true;
       updateRateUI();
       const wait = Math.min((state.reset || 60) * 1000, 30000);
       log(`RATE LIMIT GROUP "${group}" near empty (${state.remaining} left) — sleeping ${Math.round(wait/1000)}s`);
       await sleep(wait);
-      // After the sleep, assume the bucket refilled to a *modest* value.
-      // We used to guess 500-1000 here which caused a nasty loop: sleep →
-      // fire 6 concurrent requests → bucket immediately empty → sleep →
-      // repeat. ESI will tell us the true value on the next response's
-      // X-Ratelimit-Remaining header via parseRateHeaders(), so we just
-      // need a cushion high enough to let ONE probe request through.
+      // Conservative refill guess — the next successful request will
+      // update this to the real value via X-Ratelimit-Remaining.
       state.remaining = 30;
       isThrottled = false;
       updateRateUI();
@@ -4943,150 +4943,20 @@ async function startStationScan() {
   }
   if (stStopFlag) { stFinish(); return; }
 
-  // ── Step 3b: FUZZWORK VERIFICATION PASS ─────────────────────────────
-  // Fuzzwork's ?station= parameter is not strict — it leaks in data from
-  // nearby citadels and structures when the real NPC station doesn't have
-  // distinct aggregates. So a "Jita" opportunity from Fuzzwork might
-  // actually reflect prices at Perimeter TTT, which isn't actionable for
-  // someone trading at Jita IV-4.
+  // ── Step 3b: FUZZWORK VERIFICATION PASS (DEFERRED) ──────────────────
+  // In earlier versions, verification ran on ALL Fuzzwork candidates right
+  // after the spread scan. For Jita that meant 13,000+ per-typeId ESI
+  // requests, which burned through ESI's market-order rate-limit bucket
+  // and trapped the scan in a 30-second-sleep loop for hours.
   //
-  // For Station Trading, we fix this by re-fetching each candidate's real
-  // orders from ESI (which respects location_id strictly) and:
-  //   - Dropping candidates whose bid OR ask doesn't exist at the NPC station
-  //   - Re-running the spread calculation with verified ESI prices
-  //   - Re-applying ROI/profit filters against the corrected values
+  // The fix: verification now runs AFTER history + volume filter (Step 5),
+  // at which point the candidate set has typically shrunk 5-10× via the
+  // Min Daily Vol filter. Verifying 500-2,000 items against ESI is
+  // tractable; verifying 13,000 is not.
   //
-  // Only runs in FUZZ mode. ESI and TOP modes already fetch station-precise
-  // data and don't need verification.
+  // Non-Fuzz modes skip verification entirely — ESI and TOP are already
+  // station-precise.
   let verifiedCandidates = candidates;
-  if (stDataSource === 'fuzz') {
-    stLog(`VERIFYING ${candidates.length} Fuzzwork candidates against live ESI...`);
-    stSetProgress(42, `Verifying ${candidates.length} candidates against ESI...`, '');
-    const verifyStart = Date.now();
-    const verifiedMap = {}; // typeId → {askMin, bidMax, sellVol, buyVol, sellOrders, buyOrders}
-    const toVerify = [...new Set(candidates.map(c => c.typeId))];
-    let verified = 0;
-    const VERIFY_CONC = 6;
-    let vIdx = 0;
-    async function verifyWorker() {
-      while (vIdx < toVerify.length && !stStopFlag) {
-        const tid = toVerify[vIdx++];
-        // Allow one 429-retry per item; without this, a rate-limit burst
-        // can invalidate hundreds of verification results silently.
-        let attempt429 = 0;
-        let handled = false;
-        while (!stStopFlag && attempt429 < 2 && !handled) {
-          try {
-            await checkThrottle();
-            const resp = await fetchWithTimeout(
-              `https://esi.evetech.net/latest/markets/${hubId}/orders/?order_type=all&type_id=${tid}`,
-              20000
-            );
-            parseRateHeaders(resp.headers);
-            if (resp.status === 429) {
-              await handle429(resp.headers);
-              attempt429++;
-              continue;
-            }
-            if (resp.ok) {
-              const orders = await resp.json();
-              // Hard filter: only orders at THIS specific NPC station
-              const stOrders = orders.filter(o => Number(o.location_id) === hub.station);
-              const sells = stOrders.filter(o => !o.is_buy_order).sort((a,b) => a.price - b.price);
-              const buys  = stOrders.filter(o =>  o.is_buy_order).sort((a,b) => b.price - a.price);
-              verifiedMap[tid] = {
-                askMin: sells[0] ? Number(sells[0].price) : null,
-                bidMax: buys[0]  ? Number(buys[0].price)  : null,
-                sellVol: sells.reduce((s,o) => s + Number(o.volume_remain), 0),
-                buyVol:  buys.reduce((s,o)  => s + Number(o.volume_remain), 0),
-                sellOrders: sells.length,
-                buyOrders:  buys.length,
-                // Grab the volume_remain of the touch orders for crossed flip calc
-                topSellVol: sells[0] ? Number(sells[0].volume_remain) : 0,
-                topBuyVol:  buys[0]  ? Number(buys[0].volume_remain)  : 0,
-              };
-            }
-            handled = true;
-          } catch(e) { handled = true; }
-        }
-        verified++;
-        if (verified % 25 === 0) {
-          const pct = 42 + (verified / toVerify.length) * 18; // 42-60% for verification
-          stSetProgress(pct, `Verifying ${verified}/${toVerify.length} candidates...`, `${pct.toFixed(0)}%`);
-        }
-      }
-    }
-    await Promise.all(Array.from({ length: VERIFY_CONC }, verifyWorker));
-
-    if (stStopFlag) { stFinish(); return; }
-
-    // Now filter and correct the candidate list. Re-run the spread logic
-    // against verified prices so we get accurate ROI/profit with real data.
-    let rejected = 0;        // had Fuzzwork spread but not at NPC station
-    let priceCorrected = 0;  // survived but with different prices than Fuzzwork showed
-    let newlyFailROI = 0;    // survived station check but no longer clears ROI/profit
-    verifiedCandidates = [];
-    for (const c of candidates) {
-      const v = verifiedMap[c.typeId];
-      if (!v || v.askMin == null || v.bidMax == null) {
-        rejected++;
-        continue;
-      }
-      const lowestAsk  = v.askMin;
-      const highestBid = v.bidMax;
-      // Re-run the same spread calculation we used earlier, but with ESI prices
-      let buyNow, sellNow, net, roi, tradeType, flipUnits = null;
-      if (lowestAsk <= highestBid) {
-        // Crossed market — instant arbitrage
-        buyNow    = highestBid;
-        sellNow   = lowestAsk;
-        net       = highestBid - lowestAsk - (highestBid * tax);
-        roi       = net / lowestAsk;
-        tradeType = 'crossed';
-        flipUnits = Math.min(v.topSellVol, v.topBuyVol);
-        if (net <= 0 || roi < minROI || net < minProfit) { newlyFailROI++; continue; }
-      } else {
-        // Normal spread — patient station trade
-        buyNow    = highestBid;
-        sellNow   = lowestAsk;
-        const yourSell = lowestAsk - 0.01;
-        net       = (yourSell - highestBid) - (yourSell * tax);
-        roi       = net / highestBid;
-        tradeType = 'normal';
-        if (roi < minROI || net < minProfit) { newlyFailROI++; continue; }
-      }
-      // Track whether the prices actually changed vs. Fuzzwork's numbers
-      if (Math.abs(c.buyNow - buyNow) > 0.01 || Math.abs(c.sellNow - sellNow) > 0.01) {
-        priceCorrected++;
-      }
-      // Keep the candidate, overwriting the Fuzzwork-sourced values with
-      // verified ESI values
-      verifiedCandidates.push({
-        ...c,
-        buyNow, sellNow, roi,
-        profitPerUnit: net,
-        tradeType,
-        flipUnits,
-        sellVolume: v.sellVol,
-        buyVolume:  v.buyVol,
-        sellOrders: v.sellOrders,
-        buyOrders:  v.buyOrders,
-        _verified: true,
-      });
-    }
-    const elapsed = ((Date.now() - verifyStart) / 1000).toFixed(1);
-    stLog(`Verification: ${verifiedCandidates.length} kept · ${rejected} rejected (no NPC-station spread) · ${newlyFailROI} failed ROI after correction · ${priceCorrected} prices corrected · ${elapsed}s`);
-
-    if (!verifiedCandidates.length) {
-      stSetProgress(100, 'No verified candidates — most were citadel/structure mirages', '100%');
-      stResults = [];
-      stScanAllResults = [];
-      document.getElementById('tab-st-count').textContent = '0';
-      renderStTable();
-      stFinish();
-      return;
-    }
-  }
 
   // From here on, use verifiedCandidates (which is === candidates in non-Fuzz modes)
   if (stStopFlag) { stFinish(); return; }
@@ -5121,12 +4991,9 @@ async function startStationScan() {
     } catch(e) {}
     fetched++;
     if (fetched % 20 === 0) {
-      // Progress: 60-82% reserved for history (42-60% was verification for
-      // Fuzzwork mode; in ESI/TOP modes verification is skipped so we effectively
-      // jump from 42 to 60 instantly, which is fine)
-      const histStart = stDataSource === 'fuzz' ? 60 : 42;
-      const histEnd   = 82;
-      stSetProgress(histStart + (fetched/uniqueIds.length) * (histEnd - histStart),
+      // Progress: 42-82% for history in all modes. Fuzzwork verification
+      // now runs AFTER volume filter at 86-92%, not here.
+      stSetProgress(42 + (fetched/uniqueIds.length) * 40,
         `History: ${fetched}/${uniqueIds.length}`, `${((fetched/uniqueIds.length)*100).toFixed(0)}%`);
     }
   });
@@ -5154,16 +5021,137 @@ async function startStationScan() {
   if (stDormantStripped > 0) stLog(`Dormant filter: removed ${stDormantStripped} items with zero ${stDormantFilter} volume`);
   stLog(`Volume filter: ${passing.length}/${verifiedCandidates.length} passed min vol ${minVol}`);
 
-  const resolveIds = [...new Set(passing.map(c => c.typeId))];
+  // ── Step 5b: FUZZWORK VERIFICATION PASS (deferred) ────────────────────
+  // Runs here — after volume filter has cut the set down to something
+  // manageable. Fuzzwork's ?station= parameter isn't strict: it can leak
+  // in prices from nearby citadels or structures. We re-fetch each
+  // surviving candidate's orders from ESI (strict location_id) and:
+  //   - Drop candidates whose bid OR ask doesn't exist at the NPC station
+  //   - Re-run the spread calculation with verified ESI prices
+  //   - Re-apply ROI/profit filters against the corrected values
+  let stFinalCandidates = passing;
+  if (stDataSource === 'fuzz' && passing.length > 0) {
+    stSetProgress(86, `Verifying ${passing.length} candidates against ESI...`, '');
+    stLog(`VERIFYING ${passing.length} Fuzzwork candidates against live ESI...`);
+    const verifyStart = Date.now();
+    const verifiedMap = {};
+    const toVerify = [...new Set(passing.map(c => c.typeId))];
+    let verified = 0;
+    const VERIFY_CONC = 6;
+    let vIdx = 0;
+    async function verifyWorker() {
+      while (vIdx < toVerify.length && !stStopFlag) {
+        const tid = toVerify[vIdx++];
+        // Allow one 429-retry per item; without this, a rate-limit burst
+        // can invalidate hundreds of verification results silently.
+        let attempt429 = 0;
+        let handled = false;
+        while (!stStopFlag && attempt429 < 2 && !handled) {
+          try {
+            await checkThrottle();
+            const resp = await fetchWithTimeout(
+              `https://esi.evetech.net/latest/markets/${hubId}/orders/?order_type=all&type_id=${tid}`,
+              20000
+            );
+            parseRateHeaders(resp.headers);
+            if (resp.status === 429) {
+              await handle429(resp.headers);
+              attempt429++;
+              continue;
+            }
+            if (resp.ok) {
+              const orders = await resp.json();
+              // Strict filter: only orders at THIS specific NPC station
+              const stOrders = orders.filter(o => Number(o.location_id) === hub.station);
+              const sells = stOrders.filter(o => !o.is_buy_order).sort((a,b) => a.price - b.price);
+              const buys  = stOrders.filter(o =>  o.is_buy_order).sort((a,b) => b.price - a.price);
+              verifiedMap[tid] = {
+                askMin: sells[0] ? Number(sells[0].price) : null,
+                bidMax: buys[0]  ? Number(buys[0].price)  : null,
+                sellVol: sells.reduce((s,o) => s + Number(o.volume_remain), 0),
+                buyVol:  buys.reduce((s,o)  => s + Number(o.volume_remain), 0),
+                sellOrders: sells.length,
+                buyOrders:  buys.length,
+                topSellVol: sells[0] ? Number(sells[0].volume_remain) : 0,
+                topBuyVol:  buys[0]  ? Number(buys[0].volume_remain)  : 0,
+              };
+            }
+            handled = true;
+          } catch(e) { handled = true; }
+        }
+        verified++;
+        if (verified % 10 === 0) {
+          // Progress 86-92% reserved for verification
+          const pct = 86 + (verified / toVerify.length) * 6;
+          stSetProgress(pct, `Verifying ${verified}/${toVerify.length} candidates...`, `${pct.toFixed(0)}%`);
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: VERIFY_CONC }, verifyWorker));
+    if (stStopFlag) { stFinish(); return; }
+
+    // Apply verification results — re-run spread math with ESI-verified prices
+    let rejected = 0;
+    let priceCorrected = 0;
+    let newlyFailROI = 0;
+    stFinalCandidates = [];
+    for (const c of passing) {
+      const v = verifiedMap[c.typeId];
+      if (!v || v.askMin == null || v.bidMax == null) { rejected++; continue; }
+      const lowestAsk  = v.askMin;
+      const highestBid = v.bidMax;
+      let buyNow, sellNow, net, roi, tradeType, flipUnits = null;
+      if (lowestAsk <= highestBid) {
+        // Crossed market — instant arbitrage
+        buyNow = highestBid; sellNow = lowestAsk;
+        net = highestBid - lowestAsk - (highestBid * tax);
+        roi = net / lowestAsk;
+        tradeType = 'crossed';
+        flipUnits = Math.min(v.topSellVol, v.topBuyVol);
+        if (net <= 0 || roi < minROI || net < minProfit) { newlyFailROI++; continue; }
+      } else {
+        // Normal spread — patient station trade
+        buyNow = highestBid; sellNow = lowestAsk;
+        const yourSell = lowestAsk - 0.01;
+        net = (yourSell - highestBid) - (yourSell * tax);
+        roi = net / highestBid;
+        tradeType = 'normal';
+        if (roi < minROI || net < minProfit) { newlyFailROI++; continue; }
+      }
+      if (Math.abs(c.buyNow - buyNow) > 0.01 || Math.abs(c.sellNow - sellNow) > 0.01) {
+        priceCorrected++;
+      }
+      // Also recompute score since ROI may have changed
+      const newScore = Math.log10(Math.max(1, c.volume)) * roi * 100;
+      stFinalCandidates.push({
+        ...c,
+        buyNow, sellNow, roi,
+        profitPerUnit: net,
+        tradeType, flipUnits,
+        sellVolume: v.sellVol,
+        buyVolume:  v.buyVol,
+        sellOrders: v.sellOrders,
+        buyOrders:  v.buyOrders,
+        score: newScore,
+        _verified: true,
+      });
+    }
+    const elapsed = ((Date.now() - verifyStart) / 1000).toFixed(1);
+    stLog(`Verification: ${stFinalCandidates.length} kept · ${rejected} rejected (no NPC-station spread) · ${newlyFailROI} failed ROI after correction · ${priceCorrected} prices corrected · ${elapsed}s`);
+  }
+  if (stStopFlag) { stFinish(); return; }
+
+  stSetProgress(93, 'Resolving names...', '93%');
+  const resolveIds = [...new Set(stFinalCandidates.map(c => c.typeId))];
   const { nameMap, catMap } = await batchResolveNames(resolveIds);
-  passing.forEach(c => {
+  stFinalCandidates.forEach(c => {
     c.name = nameMap[c.typeId] || `#${c.typeId}`;
     c.categoryId = catMap[c.typeId] ?? TYPE_CAT_CACHE[c.typeId] ?? null;
   });
 
   // ── Apply category filter + store for live re-filtering ───────────────
-  stScanAllResults = passing;
-  stResults = applyCatFilter(passing, stSelectedCats, stExcludedCats);
+  stScanAllResults = stFinalCandidates;
+  stResults = applyCatFilter(stFinalCandidates, stSelectedCats, stExcludedCats);
   document.getElementById('tab-st-count').textContent = stResults.length;
   stSetProgress(100, `Complete — ${stResults.length} opportunities`, '100%');
   stLog(`COMPLETE · ${stResults.length} station trade opportunities at ${hub.name}`);
