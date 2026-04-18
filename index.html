@@ -991,16 +991,20 @@ tr.row-crossed:hover td{background:rgba(251,191,36,0.10) !important;}
 const ESI_UA = 'EVE-Arb-Scanner/1.0 (+https://jwahoski04-hub.github.io/eve-tools/)';
 
 // Merge the X-User-Agent header into an existing headers object (or create
-// one). Used for every ESI request — keeps identity attached automatically.
+// one). DEPRECATED — this header triggers a CORS preflight (OPTIONS) request
+// on every ESI call in Firefox, which doubled our wall-clock time and caused
+// cascading timeouts. We now identify the tool via the ?user_agent= query
+// parameter (via withUAUrl), which CCP documents as the browser-safe option.
+// Function kept for future use if CCP ever adds X-User-Agent to their CORS
+// simple-header list; currently returns headers unchanged.
 function withUA(headers) {
-  return { ...(headers || {}), 'X-User-Agent': ESI_UA };
+  return { ...(headers || {}) };
 }
 
-// Append the user_agent query parameter to an ESI URL. CCP documents three
-// ways to identify yourself: User-Agent header (blocked in browsers),
-// X-User-Agent header (works most places), and user_agent query parameter
-// (guaranteed to work because it's just a URL). We use both the header AND
-// the query param so identification is robust regardless of CORS quirks.
+// Append the user_agent query parameter to an ESI URL. This is the sole
+// identification mechanism that works in browsers without triggering a
+// preflight — it's a URL parameter, not a custom header, so no CORS
+// complications.
 // Non-ESI URLs (like Fuzzwork) pass through unchanged.
 function withUAUrl(url) {
   if (!url.includes('esi.evetech.net')) return url;
