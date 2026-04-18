@@ -2354,7 +2354,10 @@ async function fetchRegionOrders(regionId) {
         break;
       }
       const xp = resp.headers.get('X-Pages');
-      if (xp) totalPages = Math.min(parseInt(xp) || 1, 200); // safety cap
+      // Safety cap raised from 200 → 500: Jita regularly exceeds 200 pages
+      // under busy conditions (200k+ orders). 500 is still a safety ceiling
+      // but won't silently truncate real market data at major hubs.
+      if (xp) totalPages = Math.min(parseInt(xp) || 1, 500);
       page1Data = await resp.json();
       if (!Array.isArray(page1Data)) page1Data = [];
       break;
