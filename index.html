@@ -1136,6 +1136,60 @@ async function saveLearnedTopSet(typeIds) {
   } catch(e) {}
 }
 
+// Full tradeable typeId list — union of /markets/{region}/types/ across all
+// enabled hub regions. This is the complete market universe for those hubs
+// (typically 15,000-20,000 unique typeIds across the five major hub regions
+// combined). Used by Fuzzwork mode, which can batch 200 items per request
+// and doesn't care about list size — 20k typeIds = ~100 batched requests,
+// still completes in well under a minute.
+//
+// Cached for 24 hours — the active-types list changes slowly. First scan
+// of the day pays the ~5-10 second cost to fetch the types lists; all
+// subsequent scans reuse the cached result.
+async function getAllTradeableTypeIds(regionIds) {
+  const cacheKey = 'tradeable-types-' + regionIds.slice().sort().join('-');
+  try {
+    const cached = await dbGet(cacheKey);
+    if (cached && cached.data && cached.expires > Date.now()) {
+      return cached.data;
+    }
+  } catch(e) {}
+
+  const allIds = new Set();
+  // Fetch each region's types endpoint in parallel. Pages of 1000 each,
+  // up to ~10 pages per region. Much lighter than the orders endpoint.
+  await Promise.all(regionIds.map(async regionId => {
+    let page = 1;
+    while (!isStopped()) {
+      try {
+        const resp = await fetchWithTimeout(
+          `https://esi.evetech.net/latest/markets/${regionId}/types/?page=${page}`,
+          20000
+        );
+        if (!resp.ok) break;
+        const ids = await resp.json();
+        if (!Array.isArray(ids) || !ids.length) break;
+        ids.forEach(id => allIds.add(id));
+        if (ids.length < 1000) break; // partial page = last page
+        page++;
+        if (page > 30) break; // safety cap
+      } catch(e) { break; }
+    }
+  }));
+
+  const result = [...allIds];
+  try {
+    await dbPut({
+      cacheKey,
+      data: result,
+      expires: Date.now() + 24 * 60 * 60 * 1000, // 24 hours
+      etag: null, size: JSON.stringify(result).length, hits: 0,
+      fetchedAt: Date.now()
+    });
+  } catch(e) {}
+  return result;
+}
+
 // Current data source mode — per-tab, persisted in localStorage.
 let dataSource   = localStorage.getItem('eve-arb-ds')    || 'esi';
 let stDataSource = localStorage.getItem('eve-arb-st-ds') || 'esi';
@@ -1766,8 +1820,40 @@ function tickTimer() {
     } else if (timerLastPct >= 100) {
       etaEl.textContent = 'done';
     } else {
-      const estTotal = elapsed / (timerLastPct / 100);
-      const remaining = Math.max(0, estTotal - elapsed);
+      // Prefer rolling rate from bulk fetch samples during the fetch phase —
+      // the cumulative-average ETA is badly skewed by our slow first minute
+      // (page-1 discovery + connection warmup), producing absurd ETAs like
+      // 35 minutes when the real rate is fine. If we have fresh rolling
+      // samples, extrapolate from those instead.
+      let remaining = null;
+      if (bulkFetchSamples.length >= 2 && bulkFetchStart > 0) {
+        const hubs = Object.values(bulkProgress);
+        const totalFetched = hubs.reduce((s, h) => s + (h.fetched || 0), 0);
+        const totalPages   = hubs.reduce((s, h) => s + (h.total   || 0), 0);
+        if (totalPages > 0 && totalFetched > 0) {
+          const first = bulkFetchSamples[0];
+          const last  = bulkFetchSamples[bulkFetchSamples.length - 1];
+          const dt = Math.max(1, (last.t - first.t) / 1000);
+          const dc = last.count - first.count;
+          const rollingRate = dc / dt; // pages/sec
+          // Only use rolling rate if it's actually non-zero and sensible
+          if (rollingRate > 0.1) {
+            const pagesLeft = totalPages - totalFetched;
+            // Fetch is ~60-70% of total wall time on a cold scan. After fetch
+            // finishes, there's compare (~5s), history (~60-120s), names (~5s).
+            // Add ~90s as rough padding for post-fetch phases.
+            const fetchRemainingMs = (pagesLeft / rollingRate) * 1000;
+            const postFetchMs = 90000;
+            remaining = fetchRemainingMs + postFetchMs;
+          }
+        }
+      }
+      // Fallback — cumulative-average ETA. Only used in later phases
+      // (compare/history/names) where we don't have rolling samples.
+      if (remaining === null) {
+        const estTotal = elapsed / (timerLastPct / 100);
+        remaining = Math.max(0, estTotal - elapsed);
+      }
       etaEl.textContent = formatDuration(remaining);
     }
   }
@@ -2244,12 +2330,12 @@ function setVolWindow(win) {
 const DS_DESCRIPTIONS = {
   'esi':  '<b>Raw ESI:</b> Full bulk market dump — slowest, most precise. Every order at every hub.',
   'top':  '<b>Top 2000:</b> Per-item ESI query for ~320 core items + any learned from past Raw ESI scans. Moderate speed, same station-level precision.',
-  'fuzz': '<b>Fuzzwork:</b> Pre-aggregated data pinned to each hub station. Fastest. <span style="color:var(--amber)">Data may be up to ~30 min stale.</span>'
+  'fuzz': '<b>Fuzzwork:</b> Pre-aggregated data pinned to each hub station, batched 200 items per request. Fastest mode, scans the full market universe (~15-20k items). <span style="color:var(--amber)">Data may be up to ~30 min stale.</span>'
 };
 const ST_DS_DESCRIPTIONS = {
   'esi':  '<b>Raw ESI:</b> Full region dump filtered to this station — slowest, most precise.',
   'top':  '<b>Top 2000:</b> Per-item ESI query for core + learned items. Moderate speed, station-level precision.',
-  'fuzz': '<b>Fuzzwork:</b> Pre-aggregated data pinned to this station. Fastest. <span style="color:var(--amber)">Data may be up to ~30 min stale.</span>'
+  'fuzz': '<b>Fuzzwork:</b> Pre-aggregated data pinned to this station, batched 200 items per request. Fastest mode, scans the full market universe (~15-20k items). <span style="color:var(--amber)">Data may be up to ~30 min stale.</span>'
 };
 
 function setDataSource(mode) {
@@ -2631,11 +2717,24 @@ async function startScan() {
   let totalOrders = 0;
 
   // If we're in a filtered mode (top/fuzz), get the typeIds list up front.
-  // Both modes use the same merged seed+learned set.
+  // TOP 2000 and FUZZWORK need a typeIds list, but what list differs:
+  //
+  // TOP 2000 — per-item ESI queries. Speed scales inversely with list size,
+  // so we keep it tight: curated seed (~320 popular items) plus up to 3000
+  // items "learned" from prior RAW scans.
+  //
+  // FUZZWORK — server-side aggregated, batched 200 items per URL. Scales
+  // extremely well. Worth scanning the FULL market universe — typically
+  // 15-20k unique typeIds across the five hub regions — so we see every
+  // real arbitrage opportunity, not just the curated list.
   let modeTypeIds = null;
-  if (dataSource === 'top' || dataSource === 'fuzz') {
+  if (dataSource === 'top') {
     modeTypeIds = await getTopTypeIds();
-    log(`${dataSource.toUpperCase()} mode: scanning ${modeTypeIds.length} typeIds (${TOP_TYPE_SEED.length} seed + ${modeTypeIds.length - TOP_TYPE_SEED.length} learned)`);
+    log(`TOP 2000 mode: scanning ${modeTypeIds.length} typeIds (${TOP_TYPE_SEED.length} seed + ${modeTypeIds.length - TOP_TYPE_SEED.length} learned)`);
+  } else if (dataSource === 'fuzz') {
+    log(`FUZZWORK mode: loading full tradeable types list across ${hubs.length} regions...`);
+    modeTypeIds = await getAllTradeableTypeIds(hubs);
+    log(`FUZZWORK mode: scanning ${modeTypeIds.length.toLocaleString()} tradeable typeIds across all selected hubs`);
   }
 
   // Fetch all hubs simultaneously — biggest speed win
@@ -3357,9 +3456,13 @@ async function startStationScan() {
   stLog(`FETCHING ALL ORDERS FOR ${hub.name.toUpperCase()} (${stDataSource.toUpperCase()} mode)...`);
   stSetProgress(0, `Fetching ${hub.name} — mode: ${stDataSource}`, '');
   let stModeTypeIds = null;
-  if (stDataSource === 'top' || stDataSource === 'fuzz') {
+  if (stDataSource === 'top') {
     stModeTypeIds = await getTopTypeIds();
-    stLog(`${stDataSource.toUpperCase()} mode: scanning ${stModeTypeIds.length} typeIds`);
+    stLog(`TOP 2000 mode: scanning ${stModeTypeIds.length} typeIds`);
+  } else if (stDataSource === 'fuzz') {
+    stLog(`FUZZWORK mode: loading full tradeable types list for ${hub.name}...`);
+    stModeTypeIds = await getAllTradeableTypeIds([hubId]);
+    stLog(`FUZZWORK mode: scanning ${stModeTypeIds.length.toLocaleString()} tradeable typeIds at ${hub.name}`);
   }
   const orders = await fetchHubOrders(hubId, stDataSource, stModeTypeIds);
   if (stStopFlag) { stFinish(); return; }
