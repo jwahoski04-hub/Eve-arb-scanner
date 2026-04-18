@@ -1346,6 +1346,7 @@ function stopTimer() {
 // Which tab is currently driving the bulk fetch determines which progress
 // bar gets updated. Set by the caller before invoking fetchRegionOrders
 // (e.g., Hub Trading sets 'hub', Station Trading sets 'station').
+const bulkProgress = {};
 let bulkProgressTab = 'hub';
 // Hub Trading uses the fetch phase as the first 40% of a longer pipeline
 // (compare → history → names come after). Station Trading uses the fetch
